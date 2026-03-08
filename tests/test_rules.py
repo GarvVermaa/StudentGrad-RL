@@ -66,6 +66,37 @@ class TestRedundancy:
         assert not hard
         assert any("redundant" in m.lower() for m in soft)
 
+    def test_repeated_followup_design_is_soft(self):
+        engine = RuleEngine()
+        violations = engine.check(
+            ExperimentAction(action_type=ActionType.DESIGN_FOLLOWUP),
+            _state(followup_designed=True, de_performed=True),
+        )
+        hard = engine.hard_violations(violations)
+        soft = engine.soft_violations(violations)
+        assert not hard
+        assert any("redundant" in m.lower() for m in soft)
+
+
+class TestMetaActionTiming:
+    def test_followup_design_without_analysis_is_soft(self):
+        engine = RuleEngine()
+        violations = engine.check(
+            ExperimentAction(action_type=ActionType.DESIGN_FOLLOWUP),
+            _state(),
+        )
+        soft = engine.soft_violations(violations)
+        assert any("follow-up design" in m.lower() for m in soft)
+
+    def test_subagent_review_without_analysis_is_soft(self):
+        engine = RuleEngine()
+        violations = engine.check(
+            ExperimentAction(action_type=ActionType.REQUEST_SUBAGENT_REVIEW),
+            _state(),
+        )
+        soft = engine.soft_violations(violations)
+        assert any("subagent review" in m.lower() for m in soft)
+
 
 class TestResourceConstraints:
     def test_exhausted_budget_blocked(self):

@@ -130,8 +130,10 @@ class RewardComputer:
 
         rb.validity = self.w_val * (1.0 if output.success else 0.0)
 
-        # ordering bonus: +0.2 if the step was a natural next step
-        rb.ordering = 0.2 * self._ordering_score(action, prev_state)
+        ordering_score = self._ordering_score(action, prev_state)
+        rb.ordering = 0.2 * ordering_score
+        if ordering_score < 0:
+            rb.penalty += ordering_score * 0.3
 
         # information gain proxy: quality × (1 - uncertainty)
         rb.info_gain = self.w_ig * output.quality_score * (1.0 - output.uncertainty)
@@ -207,7 +209,7 @@ class RewardComputer:
     def _ordering_score(
         self, action: ExperimentAction, s: FullLatentState
     ) -> float:
-        """Heuristic: 1.0 if this step naturally follows the current progress."""
+        """Heuristic: 1.0 if natural next, 0.3 if acceptable, -1.0 if premature."""
         at = action.action_type
         p = s.progress
         NATURAL_NEXT = {
@@ -226,7 +228,17 @@ class RewardComputer:
                 p.de_performed or p.cells_clustered
             ) and not p.conclusion_reached,
         }
-        return 1.0 if NATURAL_NEXT.get(at, False) else 0.3
+        if NATURAL_NEXT.get(at, False):
+            return 1.0
+
+        has_evidence = any([
+            p.cells_clustered, p.de_performed, p.trajectories_inferred,
+            p.pathways_analyzed, p.networks_inferred, p.markers_discovered,
+        ])
+        if at in META_ACTIONS and not has_evidence:
+            return -1.0
+
+        return 0.3
 
     def _potential(self, s: FullLatentState) -> float:
         """Progress potential φ(s) — counts completed milestones."""
@@ -310,6 +322,25 @@ class RewardComputer:
                 score -= 0.3
         return max(0.0, min(1.0, score / max(n, 1)))
 
+    _METHOD_TO_TOOL: Dict[str, str] = {
+        "scanpy.pp.calculate_qc_metrics": "Scanpy",
+        "scanpy.pp.filter_cells": "Scanpy",
+        "scanpy.pp.filter_genes": "Scanpy",
+        "scanpy.pp.normalize_total": "Scanpy",
+        "scanpy.pp.log1p": "Scanpy",
+        "scanpy.pp.highly_variable_genes": "Scanpy",
+        "scanpy.pp.neighbors": "Scanpy",
+        "scanpy.tl.leiden": "Leiden",
+        "scanpy.tl.louvain": "Louvain",
+        "scanpy.tl.rank_genes_groups": "Scanpy",
+        "scanpy.tl.paga": "PAGA",
+        "scanpy.tl.umap": "UMAP",
+        "gseapy.prerank": "Scanpy",
+        "gseapy.gsea": "Scanpy",
+        "10x_chromium": "CellRanger",
+        "NovaSeq": "CellRanger",
+    }
+
     @staticmethod
     def _tool_fit_score(
         action: ExperimentAction, s: FullLatentState
@@ -322,9 +353,10 @@ class RewardComputer:
         method = action.method
         if not method:
             return 0.0
-        tool_spec = TOOL_REGISTRY.get(method)
+        resolved = RewardComputer._METHOD_TO_TOOL.get(method, method)
+        tool_spec = TOOL_REGISTRY.get(resolved)
         if tool_spec is None:
-            return -0.5  # unknown tool
+            return -0.5
         modality = getattr(s, "task_modality", None)
         if not modality or not tool_spec.modalities:
             return 0.0

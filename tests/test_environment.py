@@ -56,6 +56,17 @@ class TestEnvironmentLifecycle:
         assert obs.latest_output is not None
         assert obs.latest_output.success is False
 
+    def test_premature_followup_design_is_flagged(self):
+        env = BioExperimentEnvironment()
+        env.reset()
+        obs = env.step(ExperimentAction(
+            action_type=ActionType.DESIGN_FOLLOWUP,
+            parameters={"assay": "qPCR"},
+        ))
+        assert obs.latest_output is not None
+        assert obs.latest_output.success is True
+        assert any("follow-up design" in msg.lower() for msg in obs.rule_violations)
+
     def test_conclusion_ends_episode(self):
         env = BioExperimentEnvironment()
         env.reset()

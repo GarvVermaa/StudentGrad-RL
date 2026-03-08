@@ -501,22 +501,54 @@ class OutputGenerator:
     def _design_followup(
         self, action: ExperimentAction, s: FullLatentState, idx: int
     ) -> IntermediateOutput:
+        evidence_signals = sum([
+            int(s.progress.cells_clustered),
+            int(s.progress.de_performed),
+            int(s.progress.trajectories_inferred),
+            int(s.progress.pathways_analyzed),
+            int(s.progress.networks_inferred),
+            int(s.progress.markers_discovered),
+            int(s.progress.markers_validated),
+        ])
         return IntermediateOutput(
             output_type=OutputType.FOLLOWUP_DESIGN,
             step_index=idx,
-            summary="Follow-up experiment design proposed",
-            data={"proposal": action.parameters},
+            quality_score=min(0.75, 0.2 + 0.08 * evidence_signals),
+            summary=(
+                f"Follow-up experiment design proposed "
+                f"(evidence_signals={evidence_signals})"
+            ),
+            data={
+                "proposal": action.parameters,
+                "evidence_signals": evidence_signals,
+            },
+            uncertainty=max(0.25, 0.8 - 0.08 * evidence_signals),
             artifacts_available=["followup_proposal"],
         )
 
     def _subagent_review(
         self, action: ExperimentAction, s: FullLatentState, idx: int
     ) -> IntermediateOutput:
+        evidence_signals = sum([
+            int(s.progress.cells_clustered),
+            int(s.progress.de_performed),
+            int(s.progress.trajectories_inferred),
+            int(s.progress.pathways_analyzed),
+            int(s.progress.networks_inferred),
+            int(s.progress.markers_discovered),
+            int(s.progress.markers_validated),
+        ])
         return IntermediateOutput(
             output_type=OutputType.SUBAGENT_REPORT,
             step_index=idx,
+            quality_score=min(0.7, 0.15 + 0.07 * evidence_signals),
             summary=f"Subagent review ({action.invoked_subagent or 'general'})",
-            data={"subagent": action.invoked_subagent, "notes": "Review complete."},
+            data={
+                "subagent": action.invoked_subagent,
+                "notes": "Review complete.",
+                "evidence_signals": evidence_signals,
+            },
+            uncertainty=max(0.3, 0.85 - 0.08 * evidence_signals),
             artifacts_available=["subagent_report"],
         )
 

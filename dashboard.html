@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bio-Experiment Agent Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --bg: #0c0e14;
+  --surface: #151822;
+  --surface2: #1c2030;
+  --border: #2a2f42;
+  --text: #e2e4ea;
+  --text-dim: #8b90a5;
+  --accent: #5ce0d8;
+  --accent2: #7c6cf0;
+  --green: #4ade80;
+  --red: #f87171;
+  --amber: #fbbf24;
+  --blue: #60a5fa;
+  --pink: #f472b6;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: 'DM Sans', system-ui, sans-serif; line-height: 1.5; min-height: 100vh; }
+.mono { font-family: 'JetBrains Mono', monospace; }
+
+.header { display: flex; align-items: center; justify-content: space-between; padding: 14px 28px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.header h1 { font-size: 18px; font-weight: 700; letter-spacing: -.3px; }
+.header h1 span { color: var(--accent); }
+.header-right { display: flex; align-items: center; gap: 10px; }
+.status-pill { font-size: 12px; padding: 4px 14px; border-radius: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+.status-pill.live { background: rgba(76,222,128,.15); color: var(--green); }
+.status-pill.done { background: rgba(248,113,113,.15); color: var(--red); }
+.status-pill.waiting { background: rgba(139,144,165,.15); color: var(--text-dim); }
+
+.btn { padding: 6px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: rgba(92,224,216,.12); border-color: var(--accent); color: var(--accent); }
+.btn.primary:hover { background: rgba(92,224,216,.25); }
+.btn.danger { border-color: var(--red); color: var(--red); }
+.btn.danger:hover { background: rgba(248,113,113,.12); }
+
+.grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; padding: 20px 28px; max-width: 1600px; }
+@media (max-width: 1100px) { .grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 700px)  { .grid { grid-template-columns: 1fr; } }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; overflow: hidden; }
+.card h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 12px; }
+.card.span2 { grid-column: span 2; }
+.card.span3 { grid-column: span 3; }
+@media (max-width: 700px) { .card.span2, .card.span3 { grid-column: span 1; } }
+
+.gauge-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.gauge { flex: 1; min-width: 130px; background: var(--surface2); border-radius: 10px; padding: 14px; }
+.gauge-label { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
+.gauge-value { font-size: 22px; font-weight: 700; }
+.gauge-bar { height: 5px; border-radius: 3px; background: var(--border); margin-top: 8px; overflow: hidden; }
+.gauge-bar-fill { height: 100%; border-radius: 3px; transition: width .6s ease; }
+
+.timeline { position: relative; padding-left: 20px; }
+.timeline::before { content: ''; position: absolute; left: 6px; top: 0; bottom: 0; width: 2px; background: var(--border); }
+.timeline-item { position: relative; margin-bottom: 14px; padding-left: 18px; }
+.timeline-item::before { content: ''; position: absolute; left: -18px; top: 6px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent); background: var(--bg); }
+.timeline-item.fail::before { border-color: var(--red); }
+.tl-action { font-weight: 600; font-size: 14px; }
+.tl-meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+
+.mini-table { width: 100%; font-size: 13px; border-collapse: collapse; }
+.mini-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.mini-table td:first-child { color: var(--text-dim); white-space: nowrap; width: 40%; }
+
+.tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { font-size: 12px; padding: 3px 10px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-family: 'JetBrains Mono', monospace; }
+.tag.green { border-color: rgba(76,222,128,.3); color: var(--green); }
+.tag.pink  { border-color: rgba(244,114,182,.3); color: var(--pink); }
+.tag.amber { border-color: rgba(251,191,36,.3); color: var(--amber); }
+.tag.red   { border-color: rgba(248,113,113,.3); color: var(--red); }
+.tag.match { background: rgba(76,222,128,.15); }
+.tag.miss  { background: rgba(248,113,113,.08); }
+
+.code-block { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-family: 'JetBrains Mono', monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow-y: auto; color: var(--text-dim); line-height: 1.6; }
+
+.progress-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+.progress-item { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--border); }
+.dot.done { background: var(--green); }
+
+.pop-bar-container { margin-bottom: 10px; }
+.pop-bar-label { font-size: 12px; margin-bottom: 3px; display: flex; justify-content: space-between; }
+.pop-bar { height: 14px; border-radius: 4px; background: var(--surface2); overflow: hidden; }
+.pop-bar-fill { height: 100%; border-radius: 4px; }
+
+#reward-chart { width: 100%; height: 120px; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.conclusion-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+.conclusion-card .cc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.cc-type { font-size: 11px; padding: 2px 10px; border-radius: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+.cc-type.causal { background: rgba(244,114,182,.15); color: var(--pink); }
+.cc-type.correlative { background: rgba(96,165,250,.15); color: var(--blue); }
+.cc-type.descriptive { background: rgba(139,144,165,.15); color: var(--text-dim); }
+.cc-conf { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; }
+.cc-claim { font-size: 14px; margin-bottom: 8px; line-height: 1.5; }
+.cc-section-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 3px; margin-top: 8px; }
+
+/* ── control panel ────────────────────────────── */
+.control-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin: 20px 28px 0; padding: 18px 20px; }
+.control-panel summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent); }
+.control-panel[open] summary { margin-bottom: 14px; }
+.form-row { display: flex; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; align-items: end; }
+.form-field { display: flex; flex-direction: column; gap: 4px; }
+.form-field label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; }
+.form-field input, .form-field textarea, .form-field select {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); padding: 7px 10px; font-size: 13px; font-family: inherit; outline: none;
+}
+.form-field input:focus, .form-field textarea:focus, .form-field select:focus { border-color: var(--accent); }
+.form-field textarea { min-height: 60px; resize: vertical; }
+
+/* ── final report ─────────────────────────────── */
+.report-overlay { display: none; position: fixed; inset: 0; z-index: 100; background: rgba(12,14,20,.85); backdrop-filter: blur(6px); overflow-y: auto; padding: 40px 20px; }
+.report-overlay.visible { display: flex; justify-content: center; align-items: flex-start; }
+.report-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 32px 36px; max-width: 900px; width: 100%; }
+.report-card h2 { font-size: 22px; font-weight: 700; margin-bottom: 4px; color: var(--text); text-transform: none; letter-spacing: normal; }
+.report-card .subtitle { font-size: 13px; color: var(--text-dim); margin-bottom: 20px; }
+.report-section { margin-bottom: 20px; }
+.report-section h3 { font-size: 12px; color: var(--accent); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+.comparison-row { display: flex; gap: 20px; margin-bottom: 16px; }
+.comparison-col { flex: 1; }
+.comparison-col h4 { font-size: 11px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 6px; }
+
+.pulse { animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span>BioExp</span> Agent Dashboard</h1>
+  <div class="header-right">
+    <span id="thinking-badge" class="mono" style="font-size:11px;color:var(--accent2);display:none">REASONING ON</span>
+    <span id="step-label" class="mono" style="font-size:13px;color:var(--text-dim)">Step 0</span>
+    <span id="status-pill" class="status-pill waiting">Waiting</span>
+    <button class="btn primary" onclick="doRestart()">Restart</button>
+    <button class="btn" onclick="showReport()">Report</button>
+  </div>
+</div>
+
+<!-- Control Panel (collapsible) -->
+<details class="control-panel" id="control-panel">
+  <summary>New Task / Custom Ground Truth</summary>
+  <div class="form-row">
+    <div class="form-field" style="flex:2">
+      <label>Scenario (leave blank for random)</label>
+      <select id="f-scenario"><option value="">— random —</option></select>
+    </div>
+    <div class="form-field" style="flex:1">
+      <label>True Markers (comma-separated)</label>
+      <input id="f-markers" placeholder="e.g. MYH7, TNNT2, ACTA1" />
+    </div>
+    <div class="form-field" style="flex:1">
+      <label>Causal Mechanisms (comma-separated)</label>
+      <input id="f-mechanisms" placeholder="e.g. sarcomere dysfunction" />
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="form-field" style="flex:2">
+      <label>True Pathways (name:score, comma-sep)</label>
+      <input id="f-pathways" placeholder="e.g. Wnt_signaling:0.8, MAPK:0.6" />
+    </div>
+    <div class="form-field">
+      <button class="btn primary" onclick="doCustomRun()">Run with Ground Truth</button>
+    </div>
+  </div>
+</details>
+
+<div class="grid">
+  <div class="card span2" id="card-task">
+    <h2>Task</h2>
+    <div id="task-statement" style="font-size:15px;font-weight:500;margin-bottom:8px;">—</div>
+    <div id="task-meta" style="font-size:13px;color:var(--text-dim)"></div>
+  </div>
+
+  <div class="card">
+    <h2>Reward</h2>
+    <div id="reward-value" class="mono" style="font-size:32px;font-weight:700;margin-bottom:6px;">0.000</div>
+    <canvas id="reward-chart"></canvas>
+  </div>
+
+  <div class="card span3"><h2>Resources</h2><div class="gauge-row" id="gauges"></div></div>
+
+  <div class="card span2" style="max-height:460px;overflow-y:auto">
+    <h2>Pipeline History <span style="color:var(--accent);font-size:10px">OBSERVABLE</span></h2>
+    <div class="timeline" id="timeline"></div>
+  </div>
+
+  <div class="card">
+    <h2>Current Action</h2>
+    <table class="mini-table" id="action-table"><tbody></tbody></table>
+    <h2 style="margin-top:14px" id="thinking-header" style="display:none">Model Reasoning</h2>
+    <div class="code-block" id="model-thinking" style="display:none;border-color:rgba(124,108,240,.2);max-height:140px;margin-bottom:10px">—</div>
+    <h2 style="margin-top:10px">Model Raw Output</h2>
+    <div class="code-block" id="model-response">—</div>
+  </div>
+
+  <div class="card">
+    <h2>Discovered Markers <span style="color:var(--accent);font-size:10px">OBSERVABLE</span></h2>
+    <div class="tag-list" id="markers-list"><span class="tag" style="color:var(--text-dim)">none yet</span></div>
+    <h2 style="margin-top:14px">Candidate Mechanisms</h2>
+    <div class="tag-list" id="mechanisms-list"><span class="tag" style="color:var(--text-dim)">none yet</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Rule Violations</h2>
+    <div id="violations" style="font-size:13px;color:var(--text-dim)">None</div>
+    <h2 style="margin-top:14px">Uncertainty Summary</h2>
+    <table class="mini-table" id="uncertainty-table"><tbody></tbody></table>
+    <h2 style="margin-top:14px">Reward Breakdown</h2>
+    <table class="mini-table" id="reward-breakdown-table"><tbody></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>Latest Output</h2>
+    <table class="mini-table" id="output-table"><tbody></tbody></table>
+    <div class="code-block" id="output-data" style="margin-top:10px;max-height:140px">—</div>
+  </div>
+
+  <div class="card span3" id="card-conclusions" style="display:none;border-color:rgba(76,222,128,.25)">
+    <h2 style="color:var(--green)">Synthesized Conclusions</h2>
+    <div id="conclusions-list"></div>
+  </div>
+
+  <!-- Ground Truth Comparison (shown when episode done + has conclusions) -->
+  <div class="card span3" id="card-gt-comparison" style="display:none;border-color:rgba(251,191,36,.25)">
+    <h2 style="color:var(--amber)">Ground Truth Comparison</h2>
+    <div class="comparison-row">
+      <div class="comparison-col">
+        <h4>Agent's Markers</h4>
+        <div class="tag-list" id="gt-agent-markers"></div>
+      </div>
+      <div class="comparison-col">
+        <h4>True Markers</h4>
+        <div class="tag-list" id="gt-true-markers"></div>
+      </div>
+    </div>
+    <div class="comparison-row">
+      <div class="comparison-col">
+        <h4>Agent's Mechanisms</h4>
+        <div class="tag-list" id="gt-agent-mechs"></div>
+      </div>
+      <div class="comparison-col">
+        <h4>True Mechanisms</h4>
+        <div class="tag-list" id="gt-true-mechs"></div>
+      </div>
+    </div>
+    <div id="gt-score" style="margin-top:8px;font-size:14px;font-weight:600"></div>
+  </div>
+
+  <div class="card" style="border-color:rgba(124,108,240,.25)">
+    <h2 style="color:var(--accent2)">Cell Populations <span style="font-size:10px">HIDDEN</span></h2>
+    <div id="populations"></div>
+  </div>
+  <div class="card" style="border-color:rgba(124,108,240,.25)">
+    <h2 style="color:var(--accent2)">Ground Truth <span style="font-size:10px">HIDDEN</span></h2>
+    <div style="margin-bottom:8px"><span style="font-size:11px;color:var(--text-dim);text-transform:uppercase">True Markers</span><div class="tag-list" id="true-markers" style="margin-top:4px"></div></div>
+    <div style="margin-bottom:8px"><span style="font-size:11px;color:var(--text-dim);text-transform:uppercase">Causal Mechanisms</span><div class="tag-list" id="true-mechanisms" style="margin-top:4px"></div></div>
+    <div><span style="font-size:11px;color:var(--text-dim);text-transform:uppercase">Top Pathways</span><table class="mini-table" id="pathways-table" style="margin-top:4px"><tbody></tbody></table></div>
+  </div>
+  <div class="card" style="border-color:rgba(124,108,240,.25)">
+    <h2 style="color:var(--accent2)">Technical State <span style="font-size:10px">HIDDEN</span></h2>
+    <table class="mini-table" id="technical-table"><tbody></tbody></table>
+    <h2 style="margin-top:14px;color:var(--accent2)">Failure Conditions <span style="font-size:10px">HIDDEN</span></h2>
+    <div class="tag-list" id="failure-conditions"></div>
+  </div>
+  <div class="card span3" style="border-color:rgba(124,108,240,.25)">
+    <h2 style="color:var(--accent2)">Experiment Progress <span style="font-size:10px">HIDDEN</span></h2>
+    <div class="progress-grid" id="progress-grid"></div>
+  </div>
+</div>
+
+<!-- Final Report Overlay -->
+<div class="report-overlay" id="report-overlay" onclick="if(event.target===this)hideReport()">
+  <div class="report-card" id="report-content"></div>
+</div>
+
+<script>
+const POLL_MS = 1200;
+const POP_COLORS = ['#5ce0d8','#7c6cf0','#f472b6','#60a5fa','#fbbf24','#4ade80','#f87171','#c084fc','#fb923c','#38bdf8'];
+let rewardHistory = [];
+let lastTimestamp = 0;
+let latestState = null;
+
+function $(id) { return document.getElementById(id); }
+function setHTML(id, html) { $(id).innerHTML = html; }
+function tagsHTML(arr, cls) {
+  if (!arr || !arr.length) return '<span class="tag" style="color:var(--text-dim)">—</span>';
+  return arr.map(t => `<span class="tag ${cls||''}">${esc(t)}</span>`).join('');
+}
+function esc(s) { if (s == null) return '—'; const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
+function pct(used, total) { if (!total) return 0; return Math.min(100, Math.max(0, (used / total) * 100)); }
+function gaugeColor(p) { return p < 50 ? 'var(--green)' : p < 80 ? 'var(--amber)' : 'var(--red)'; }
+function fmt(n) { if (n == null) return '0'; return Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 }); }
+function gauge(label, value, pctVal, inv) {
+  let bar = '';
+  if (pctVal != null) { const c = inv ? gaugeColor(100-pctVal) : gaugeColor(pctVal); bar = `<div class="gauge-bar"><div class="gauge-bar-fill" style="width:${pctVal.toFixed(1)}%;background:${c}"></div></div>`; }
+  return `<div class="gauge"><div class="gauge-label">${label}</div><div class="gauge-value mono">${value}</div>${bar}</div>`;
+}
+function miniRows(obj) { return Object.entries(obj).map(([k,v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join(''); }
+
+function drawRewardChart(canvas, data) {
+  const ctx = canvas.getContext('2d'); const W = canvas.width = canvas.offsetWidth * 2; const H = canvas.height = canvas.offsetHeight * 2;
+  ctx.clearRect(0, 0, W, H); if (data.length < 2) return;
+  const vals = data.map(d => d.v); const minV = Math.min(0, ...vals); const maxV = Math.max(0.1, ...vals); const range = maxV - minV || 1; const pad = 8;
+  ctx.strokeStyle = 'rgba(92,224,216,.4)'; ctx.lineWidth = 2; ctx.beginPath();
+  const yZ = H - pad - ((0 - minV) / range) * (H - 2*pad); ctx.moveTo(pad, yZ); ctx.lineTo(W-pad, yZ); ctx.stroke();
+  ctx.strokeStyle = '#5ce0d8'; ctx.lineWidth = 3; ctx.beginPath();
+  data.forEach((d,i) => { const x = pad+(i/(data.length-1))*(W-2*pad); const y = H-pad-((d.v-minV)/range)*(H-2*pad); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); }); ctx.stroke();
+  data.forEach((d,i) => { const x = pad+(i/(data.length-1))*(W-2*pad); const y = H-pad-((d.v-minV)/range)*(H-2*pad); ctx.fillStyle = d.v>=0?'#4ade80':'#f87171'; ctx.beginPath(); ctx.arc(x,y,5,0,Math.PI*2); ctx.fill(); });
+}
+
+function comparedTags(agentArr, trueArr, cls) {
+  if (!agentArr || !agentArr.length) return '<span class="tag" style="color:var(--text-dim)">—</span>';
+  const trueSet = new Set((trueArr||[]).map(t => t.toUpperCase()));
+  return agentArr.map(t => {
+    const hit = trueSet.has(t.toUpperCase());
+    return `<span class="tag ${cls} ${hit?'match':'miss'}">${esc(t)} ${hit?'✓':'✗'}</span>`;
+  }).join('');
+}
+
+// ── API actions ──
+async function doRestart() {
+  rewardHistory = []; lastTimestamp = 0;
+  await fetch('/api/restart', { method: 'POST' });
+}
+
+async function doCustomRun() {
+  const scenario = $('f-scenario').value || undefined;
+  const markers = $('f-markers').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const mechs = $('f-mechanisms').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const pwRaw = $('f-pathways').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const pathways = {};
+  pwRaw.forEach(p => { const [k,v] = p.split(':'); if (k && v) pathways[k.trim()] = parseFloat(v); });
+  const gt = {};
+  if (markers.length) gt.true_markers = markers;
+  if (mechs.length) gt.causal_mechanisms = mechs;
+  if (Object.keys(pathways).length) gt.true_pathways = pathways;
+  rewardHistory = []; lastTimestamp = 0;
+  await fetch('/api/run', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ scenario_name: scenario, ground_truth: Object.keys(gt).length ? gt : undefined }) });
+}
+
+function showReport() {
+  const s = latestState; if (!s) return;
+  const rc = $('report-content');
+  const t = s.task || {};
+  const lat = s.latent || {};
+  const conc = s.conclusions || [];
+  const trueM = lat.true_markers || [];
+  const trueMech = lat.causal_mechanisms || [];
+  const agentM = s.discovered_markers || [];
+  const markerHits = agentM.filter(m => trueM.some(t => t.toUpperCase() === m.toUpperCase()));
+  const r = s.resources || {};
+
+  let html = `<h2>Experiment Report</h2>
+  <div class="subtitle">${esc(t.problem_statement)}</div>
+  <div class="report-section"><h3>Summary</h3>
+    <table class="mini-table"><tbody>
+      <tr><td>Status</td><td>${s.episode_done ? 'Completed' : 'In Progress'}</td></tr>
+      <tr><td>Steps</td><td>${s.step}</td></tr>
+      <tr><td>Cumulative Reward</td><td style="color:${(s.cumulative_reward||0)>=0?'var(--green)':'var(--red)'}">${((s.cumulative_reward||0)>=0?'+':'')}${(s.cumulative_reward||0).toFixed(3)}</td></tr>
+      <tr><td>Budget Used</td><td>$${fmt(r.budget_used)} / $${fmt((r.budget_used||0)+(r.budget_remaining||0))}</td></tr>
+      <tr><td>Time Used</td><td>${(r.time_used_days||0).toFixed(0)}d / ${((r.time_used_days||0)+(r.time_remaining_days||0)).toFixed(0)}d</td></tr>
+      <tr><td>Markers Found</td><td>${agentM.length} (${markerHits.length} match ground truth)</td></tr>
+    </tbody></table>
+  </div>`;
+
+  if (conc.length) {
+    html += `<div class="report-section"><h3>Conclusions</h3>`;
+    conc.forEach(c => {
+      html += `<div class="conclusion-card"><div class="cc-header"><span class="cc-type ${(c.claim_type||'').toLowerCase()}">${esc(c.claim_type)}</span><span class="cc-conf" style="color:${c.confidence>=.7?'var(--green)':c.confidence>=.4?'var(--amber)':'var(--red)'}">${((c.confidence||0)*100).toFixed(0)}%</span></div>`;
+      if (c.claim) html += `<div class="cc-claim">${esc(c.claim)}</div>`;
+      if (c.top_markers?.length) html += `<div class="cc-section-label">Top Markers</div><div class="tag-list">${c.top_markers.map(m=>`<span class="tag green">${esc(m)}</span>`).join('')}</div>`;
+      if (c.causal_mechanisms?.length) html += `<div class="cc-section-label">Causal Mechanisms</div><div class="tag-list">${c.causal_mechanisms.map(m=>`<span class="tag pink">${esc(m)}</span>`).join('')}</div>`;
+      if (c.predicted_pathways && Object.keys(c.predicted_pathways).length) html += `<div class="cc-section-label">Predicted Pathways</div><table class="mini-table"><tbody>${Object.entries(c.predicted_pathways).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${Number(v).toFixed(3)}</td></tr>`).join('')}</tbody></table>`;
+      html += `</div>`;
+    });
+    html += `</div>`;
+  }
+
+  html += `<div class="report-section"><h3>Ground Truth Comparison</h3>
+    <div class="comparison-row"><div class="comparison-col"><h4>Agent's Markers</h4><div class="tag-list">${comparedTags(agentM, trueM, 'green')}</div></div>
+    <div class="comparison-col"><h4>True Markers</h4><div class="tag-list">${tagsHTML(trueM,'green')}</div></div></div>
+    <div class="comparison-row"><div class="comparison-col"><h4>Agent's Mechanisms</h4><div class="tag-list">${comparedTags(s.candidate_mechanisms, trueMech, 'pink')}</div></div>
+    <div class="comparison-col"><h4>True Mechanisms</h4><div class="tag-list">${tagsHTML(trueMech,'pink')}</div></div></div>
+  </div>`;
+
+  const hist = s.pipeline_history || [];
+  if (hist.length) {
+    html += `<div class="report-section"><h3>Pipeline Steps</h3><table class="mini-table"><tbody>`;
+    hist.forEach(h => { html += `<tr><td>${h.success?'✓':'✗'} ${esc(h.action_type)}</td><td>${esc(h.output_summary)} · q=${h.quality_score}</td></tr>`; });
+    html += `</tbody></table></div>`;
+  }
+
+  html += `<div style="margin-top:20px;text-align:right"><button class="btn" onclick="hideReport()">Close</button> <button class="btn primary" onclick="doRestart();hideReport()">New Run</button></div>`;
+  rc.innerHTML = html;
+  $('report-overlay').classList.add('visible');
+}
+function hideReport() { $('report-overlay').classList.remove('visible'); }
+
+function renderState(s) {
+  latestState = s;
+  if (s.error) { $('status-pill').className='status-pill waiting'; $('status-pill').textContent='Waiting'; $('task-statement').textContent=s.error; return; }
+
+  const pill = $('status-pill');
+  if (s.episode_done) { pill.className='status-pill done'; pill.textContent='Done'; } else { pill.className='status-pill live'; pill.textContent='Live'; }
+  $('step-label').textContent = `Step ${s.step}`;
+
+  if (s.thinking_enabled) { $('thinking-badge').style.display = ''; } else { $('thinking-badge').style.display = 'none'; }
+
+  const t = s.task || {};
+  $('task-statement').textContent = t.problem_statement || '—';
+  $('task-meta').innerHTML = [t.organism, t.tissue, t.modality, t.conditions ? t.conditions.join(' vs ') : null].filter(Boolean).map(v => `<span class="tag">${esc(v)}</span>`).join(' ');
+
+  const cum = s.cumulative_reward || 0;
+  $('reward-value').textContent = (cum >= 0 ? '+' : '') + cum.toFixed(3);
+  $('reward-value').style.color = cum >= 0 ? 'var(--green)' : 'var(--red)';
+  if (s.timestamp !== lastTimestamp && s.step > 0) { rewardHistory.push({ step: s.step, v: cum }); lastTimestamp = s.timestamp; }
+  drawRewardChart($('reward-chart'), rewardHistory);
+
+  const r = s.resources || {};
+  const bT = (r.budget_used||0)+(r.budget_remaining||0), tT = (r.time_used_days||0)+(r.time_remaining_days||0);
+  const bP = pct(r.budget_used, bT), tP = pct(r.time_used_days, tT);
+  $('gauges').innerHTML = [gauge('Budget Used',`$${fmt(r.budget_used)}`,bP), gauge('Budget Left',`$${fmt(r.budget_remaining)}`,100-bP,true), gauge('Time Used',`${(r.time_used_days||0).toFixed(0)}d`,tP), gauge('Time Left',`${(r.time_remaining_days||0).toFixed(0)}d`,100-tP,true), gauge('Samples',String(r.samples_consumed||0),null), gauge('Compute',`${(r.compute_hours_used||0).toFixed(1)}h`,null)].join('');
+
+  const hist = s.pipeline_history || [];
+  $('timeline').innerHTML = hist.length ? hist.map(h => `<div class="timeline-item ${!h.success?'fail':''}"><div class="tl-action">${esc(h.action_type)}${h.method?` <span style="color:var(--text-dim);font-weight:400;font-size:12px">${esc(h.method)}</span>`:''}</div><div class="tl-meta">${h.success?'✓':'✗'} ${esc(h.output_summary)} · q=${h.quality_score} · $${fmt(h.resource_cost)} · ${h.time_cost_days}d</div></div>`).join('') : '<div style="color:var(--text-dim);font-size:13px">No steps yet</div>';
+
+  const a = s.current_action;
+  if (a) { $('action-table').querySelector('tbody').innerHTML = miniRows({'Type':a.action_type,'Method':a.method||'—','Confidence':a.confidence?.toFixed(2),'Justification':a.justification||'—','Fallback?':s.used_fallback?'YES':'no'}); }
+
+  if (s.model_thinking) { $('model-thinking').style.display=''; $('model-thinking').textContent = s.model_thinking; } else { $('model-thinking').style.display='none'; }
+  $('model-response').textContent = s.model_response_raw || '—';
+
+  setHTML('markers-list', tagsHTML(s.discovered_markers, 'green'));
+  setHTML('mechanisms-list', tagsHTML(s.candidate_mechanisms, 'pink'));
+
+  const v = s.rule_violations || [];
+  $('violations').innerHTML = v.length ? v.map(x=>`<div class="tag red" style="margin-bottom:4px">${esc(x)}</div>`).join('') : '<span style="color:var(--text-dim)">None</span>';
+  $('uncertainty-table').querySelector('tbody').innerHTML = miniRows(s.uncertainty_summary || {});
+  const rb = s.reward_breakdown || {};
+  $('reward-breakdown-table').querySelector('tbody').innerHTML = miniRows(Object.fromEntries(Object.entries(rb).map(([k,v])=>[k,(v>=0?'+':'')+v.toFixed(4)])));
+
+  const lo = s.latest_output;
+  if (lo) { $('output-table').querySelector('tbody').innerHTML = miniRows({'Summary':lo.summary,'Success':lo.success?'✓':'✗','Quality':lo.quality_score,'Uncertainty':lo.uncertainty,'Warnings':(lo.warnings||[]).join('; ')||'—'}); $('output-data').textContent = lo.data_preview||'—'; }
+
+  const conc = s.conclusions || [];
+  if (conc.length) {
+    $('card-conclusions').style.display = '';
+    $('conclusions-list').innerHTML = conc.map(c => {
+      const confColor = c.confidence>=.7?'var(--green)':c.confidence>=.4?'var(--amber)':'var(--red)';
+      let h = `<div class="conclusion-card"><div class="cc-header"><span class="cc-type ${(c.claim_type||'').toLowerCase()}">${esc(c.claim_type||'unknown')}</span><span class="cc-conf" style="color:${confColor}">${((c.confidence||0)*100).toFixed(0)}%</span></div>`;
+      if (c.claim) h += `<div class="cc-claim">${esc(c.claim)}</div>`;
+      if (c.top_markers?.length) h += `<div class="cc-section-label">Top Markers</div><div class="tag-list">${c.top_markers.map(m=>`<span class="tag green">${esc(m)}</span>`).join('')}</div>`;
+      if (c.causal_mechanisms?.length) h += `<div class="cc-section-label">Causal Mechanisms</div><div class="tag-list">${c.causal_mechanisms.map(m=>`<span class="tag pink">${esc(m)}</span>`).join('')}</div>`;
+      if (c.predicted_pathways && Object.keys(c.predicted_pathways).length) h += `<div class="cc-section-label">Predicted Pathways</div><table class="mini-table"><tbody>${Object.entries(c.predicted_pathways).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${Number(v).toFixed(3)}</td></tr>`).join('')}</tbody></table>`;
+      return h + '</div>';
+    }).join('');
+  } else { $('card-conclusions').style.display = 'none'; }
+
+  // Ground truth comparison (visible when done or has conclusions)
+  const lat = s.latent;
+  if ((s.episode_done || conc.length) && lat) {
+    $('card-gt-comparison').style.display = '';
+    setHTML('gt-agent-markers', comparedTags(s.discovered_markers, lat.true_markers, 'green'));
+    setHTML('gt-true-markers', tagsHTML(lat.true_markers, 'green'));
+    setHTML('gt-agent-mechs', comparedTags(s.candidate_mechanisms, lat.causal_mechanisms, 'pink'));
+    setHTML('gt-true-mechs', tagsHTML(lat.causal_mechanisms, 'pink'));
+    const hits = (s.discovered_markers||[]).filter(m => (lat.true_markers||[]).some(t => t.toUpperCase()===m.toUpperCase()));
+    $('gt-score').innerHTML = `Marker accuracy: <span style="color:var(--accent)">${hits.length}</span> / ${(lat.true_markers||[]).length} true markers recovered`;
+  } else { $('card-gt-comparison').style.display = 'none'; }
+
+  if (!lat) return;
+  const pops = lat.cell_populations || [];
+  $('populations').innerHTML = pops.map((p,i) => { const c = POP_COLORS[i%POP_COLORS.length]; const w = (p.proportion*100).toFixed(1); return `<div class="pop-bar-container"><div class="pop-bar-label"><span>${esc(p.name)} <span style="color:var(--text-dim);font-size:11px">${p.state}</span></span><span class="mono" style="font-size:12px">${w}%</span></div><div class="pop-bar"><div class="pop-bar-fill" style="width:${w}%;background:${c}"></div></div><div class="tag-list" style="margin-top:3px">${p.marker_genes.map(g=>`<span class="tag" style="font-size:11px">${esc(g)}</span>`).join('')}</div></div>`; }).join('') || '<span style="color:var(--text-dim)">—</span>';
+
+  setHTML('true-markers', tagsHTML(lat.true_markers, 'green'));
+  setHTML('true-mechanisms', tagsHTML(lat.causal_mechanisms, 'pink'));
+  const pw = lat.true_pathways || {};
+  $('pathways-table').querySelector('tbody').innerHTML = miniRows(Object.fromEntries(Object.entries(pw).slice(0,10).map(([k,v])=>[k,v.toFixed(3)])));
+  $('technical-table').querySelector('tbody').innerHTML = miniRows(lat.technical || {});
+  setHTML('failure-conditions', tagsHTML(lat.hidden_failure_conditions, 'red'));
+  const prog = lat.progress || {};
+  const bK = Object.entries(prog).filter(([,v])=>typeof v==='boolean'), nK = Object.entries(prog).filter(([,v])=>typeof v!=='boolean');
+  $('progress-grid').innerHTML = bK.map(([k,v])=>`<div class="progress-item"><div class="dot ${v?'done':''}"></div>${k.replace(/_/g,' ')}</div>`).join('') + nK.map(([k,v])=>`<div class="progress-item" style="color:var(--accent)"><span class="mono" style="font-size:11px;margin-right:4px">${v??'—'}</span>${k.replace(/_/g,' ')}</div>`).join('');
+
+  if (s.episode_done && !reportShownForTimestamp && s.timestamp) { reportShownForTimestamp = s.timestamp; setTimeout(showReport, 800); }
+}
+
+let reportShownForTimestamp = null;
+
+async function loadScenarios() {
+  try {
+    const res = await fetch('/api/scenarios');
+    const data = await res.json();
+    const sel = $('f-scenario');
+    (data.scenarios || []).forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o); });
+  } catch(e) {}
+}
+
+async function poll() {
+  try { const res = await fetch('/api/state',{cache:'no-store'}); const data = await res.json(); renderState(data); } catch(e) {}
+  setTimeout(poll, POLL_MS);
+}
+
+loadScenarios();
+poll();
+</script>
+</body>
+</html>

@@ -35,6 +35,14 @@ def test_parse_action_completion_roundtrip():
     assert action.confidence == 0.8
 
 
+def test_parse_action_completion_accepts_reasoning_alias():
+    action = parse_action_completion(
+        '{"action_type":"run_qc","reasoning":"Measure quality before filtering."}'
+    )
+    assert action is not None
+    assert action.justification == "Measure quality before filtering."
+
+
 def test_build_prompt_examples_contains_reference_action():
     examples = build_prompt_examples(
         dataset_episodes=1,

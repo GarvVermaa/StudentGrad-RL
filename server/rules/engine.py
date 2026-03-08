@@ -32,6 +32,19 @@ class RuleEngine:
     latent state before each action is applied.
     """
 
+    @staticmethod
+    def _has_analysis_evidence(s: FullLatentState) -> bool:
+        p = s.progress
+        return any([
+            p.cells_clustered,
+            p.de_performed,
+            p.trajectories_inferred,
+            p.pathways_analyzed,
+            p.networks_inferred,
+            p.markers_discovered,
+            p.markers_validated,
+        ])
+
     def check(
         self, action: ExperimentAction, state: FullLatentState
     ) -> List[RuleViolation]:
@@ -164,13 +177,16 @@ class RuleEngine:
             ActionType.RUN_QC: "qc_performed",
             ActionType.FILTER_DATA: "data_filtered",
             ActionType.NORMALIZE_DATA: "data_normalized",
+            ActionType.DESIGN_FOLLOWUP: "followup_designed",
+            ActionType.REQUEST_SUBAGENT_REVIEW: "subagent_review_requested",
+            ActionType.SYNTHESIZE_CONCLUSION: "conclusion_reached",
         }
         flag = REDUNDANT.get(at)
         if flag and getattr(p, flag, False):
             vs.append(RuleViolation(
                 rule_id=f"redundant_{at.value}",
-                severity=Severity.SOFT,
-                message=f"Step '{at.value}' already completed — redundant action",
+                severity=Severity.HARD,
+                message=f"Step '{at.value}' already completed — redundant action blocked",
             ))
         return vs
 
@@ -180,12 +196,36 @@ class RuleEngine:
         self, action: ExperimentAction, s: FullLatentState
     ) -> List[RuleViolation]:
         vs: List[RuleViolation] = []
+        has_analysis_evidence = self._has_analysis_evidence(s)
+
+        if action.action_type == ActionType.DESIGN_FOLLOWUP:
+            if not has_analysis_evidence:
+                vs.append(RuleViolation(
+                    rule_id="premature_followup_design",
+                    severity=Severity.HARD,
+                    message=(
+                        "Follow-up design without prior analysis is blocked; "
+                        "complete wet-lab and computational steps first"
+                    ),
+                ))
+
+        if action.action_type == ActionType.REQUEST_SUBAGENT_REVIEW:
+            if not has_analysis_evidence:
+                vs.append(RuleViolation(
+                    rule_id="premature_subagent_review",
+                    severity=Severity.HARD,
+                    message=(
+                        "Subagent review without prior analysis is blocked; "
+                        "generate evidence first"
+                    ),
+                ))
+
         if action.action_type == ActionType.SYNTHESIZE_CONCLUSION:
             if not s.progress.de_performed and not s.progress.cells_clustered:
                 vs.append(RuleViolation(
                     rule_id="premature_conclusion",
-                    severity=Severity.SOFT,
-                    message="Synthesising conclusion without substantive analysis",
+                    severity=Severity.HARD,
+                    message="Cannot synthesise conclusion without substantive analysis",
                 ))
 
             claims = action.parameters.get("claims", [])
@@ -210,6 +250,33 @@ class RuleEngine:
 
     # ── tool / modality compatibility ────────────────────────────────────
 
+    _KNOWN_METHODS = {
+        "scanpy.pp.calculate_qc_metrics", "scanpy.pp.filter_cells",
+        "scanpy.pp.filter_genes", "scanpy.pp.normalize_total",
+        "scanpy.pp.log1p", "scanpy.pp.highly_variable_genes",
+        "scanpy.pp.neighbors", "scanpy.tl.leiden", "scanpy.tl.louvain",
+        "scanpy.tl.rank_genes_groups", "scanpy.tl.paga", "scanpy.tl.umap",
+        "gseapy.prerank", "gseapy.gsea", "10x_chromium", "NovaSeq",
+    }
+    _METHOD_TO_TOOL = {
+        "scanpy.pp.calculate_qc_metrics": "Scanpy",
+        "scanpy.pp.filter_cells": "Scanpy",
+        "scanpy.pp.filter_genes": "Scanpy",
+        "scanpy.pp.normalize_total": "Scanpy",
+        "scanpy.pp.log1p": "Scanpy",
+        "scanpy.pp.highly_variable_genes": "Scanpy",
+        "scanpy.pp.neighbors": "Scanpy",
+        "scanpy.tl.leiden": "Leiden",
+        "scanpy.tl.louvain": "Louvain",
+        "scanpy.tl.rank_genes_groups": "Scanpy",
+        "scanpy.tl.paga": "PAGA",
+        "scanpy.tl.umap": "UMAP",
+        "gseapy.prerank": "Scanpy",
+        "gseapy.gsea": "Scanpy",
+        "10x_chromium": "CellRanger",
+        "NovaSeq": "CellRanger",
+    }
+
     def _check_tool_compatibility(
         self, action: ExperimentAction, s: FullLatentState
     ) -> List[RuleViolation]:
@@ -219,13 +286,16 @@ class RuleEngine:
         if not method:
             return vs
 
-        tool_spec = TOOL_REGISTRY.get(method)
-        if tool_spec is None:
+        resolved = self._METHOD_TO_TOOL.get(method, method)
+        tool_spec = TOOL_REGISTRY.get(resolved)
+        if tool_spec is None and method not in self._KNOWN_METHODS:
             vs.append(RuleViolation(
                 rule_id="unknown_tool",
                 severity=Severity.SOFT,
                 message=f"Tool '{method}' is not in the registry — results may be unreliable",
             ))
+            return vs
+        if tool_spec is None:
             return vs
 
         # Check modality compatibility (modality lives on the task, which is

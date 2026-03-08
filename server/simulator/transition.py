@@ -195,6 +195,8 @@ class TransitionEngine:
             ActionType.REGULATORY_NETWORK_INFERENCE: "networks_inferred",
             ActionType.MARKER_SELECTION: "markers_discovered",
             ActionType.VALIDATE_MARKER: "markers_validated",
+            ActionType.DESIGN_FOLLOWUP: "followup_designed",
+            ActionType.REQUEST_SUBAGENT_REVIEW: "subagent_review_requested",
             ActionType.SYNTHESIZE_CONCLUSION: "conclusion_reached",
         }
         flag = _MAP.get(at)

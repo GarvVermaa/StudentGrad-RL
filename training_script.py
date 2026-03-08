@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 from numbers import Real
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -21,24 +22,32 @@ INVALID_ACTION_PENALTY = -2.0
 ENVIRONMENT_ERROR_PENALTY = -4.0
 
 SYSTEM_PROMPT = """\
-You are an expert biologist planning a single-cell experiment pipeline.
+You are a biologist planning a single-cell experiment. At each step you choose one action to advance the experiment toward answering the research question.
 
-At each turn you see the experiment state and must pick the next step.
+AVAILABLE ACTIONS:
+  collect_sample, select_cohort, culture_cells, prepare_library,
+  sequence_cells, run_qc, filter_data, normalize_data,
+  integrate_batches, cluster_cells, differential_expression,
+  pathway_enrichment, trajectory_analysis, regulatory_network_inference,
+  marker_selection, validate_marker, design_followup_experiment,
+  request_subagent_review, synthesize_conclusion
 
-Action types (in typical order):
-  collect_sample, prepare_library, sequence_cells, run_qc, filter_data,
-  normalize_data, cluster_cells, differential_expression,
-  pathway_enrichment, marker_selection, validate_marker, synthesize_conclusion
+AVAILABLE TOOLS (use as "method"):
+  Wet-lab: 10x_chromium, NovaSeq, CellRanger
+  Preprocessing: scanpy.pp.calculate_qc_metrics, scanpy.pp.filter_cells,
+    scanpy.pp.normalize_total, scanpy.pp.neighbors
+  Analysis: scanpy.tl.leiden, scanpy.tl.rank_genes_groups, scanpy.tl.umap,
+    gseapy.prerank, Monocle3, scVelo, SCENIC, Seurat
+  Integration: Harmony, scanorama, BBKNN
 
-Other actions: select_cohort, culture_cells, perturb_gene, perturb_compound,
-  integrate_batches, trajectory_analysis, regulatory_network_inference,
-  design_followup_experiment, request_subagent_review
+CONSTRAINTS:
+- Each step has prerequisites (e.g. you need samples before library prep).
+- Budget and time are limited. Each action has a cost.
+- Do not repeat actions that already succeeded.
+- Synthesize a conclusion only after sufficient analysis.
 
-Respond with ONLY valid JSON, nothing else:
-{"action_type": "...", "method": null, "parameters": {}, "justification": "...", "confidence": 0.8}
-
-For synthesize_conclusion, use structured claims:
-{"action_type": "synthesize_conclusion", "parameters": {"claims": [{"top_markers": ["GENE1", "GENE2"], "causal_mechanisms": ["mechanism description"], "predicted_pathways": {"pathway_name": 0.8}, "confidence": 0.8, "claim_type": "causal", "claim": "optional free text"}]}, "justification": "...", "confidence": 0.8}
+Reply with ONLY valid JSON (no comments):
+{"action_type": "...", "method": "...", "parameters": {}, "justification": "...", "confidence": 0.8}
 """
 
 HEURISTIC_SEQUENCE = [
@@ -56,6 +65,52 @@ HEURISTIC_SEQUENCE = [
 ]
 
 VALID_ACTION_TYPES = {action.value for action in ActionType}
+
+
+def compact_preview(value: Any, max_chars: int = 160) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=True, sort_keys=True)
+    except TypeError:
+        text = str(value)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3] + "..."
+
+
+def _edit_distance(a: str, b: str) -> int:
+    if len(a) < len(b):
+        return _edit_distance(b, a)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a):
+        curr = [i + 1]
+        for j, cb in enumerate(b):
+            curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (ca != cb)))
+        prev = curr
+    return prev[-1]
+
+
+def get_payload_value(payload: Dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in payload:
+            return payload[name]
+
+    lowered = {
+        str(key).lower(): value
+        for key, value in payload.items()
+    }
+    for name in names:
+        if name.lower() in lowered:
+            return lowered[name.lower()]
+
+    for key, value in lowered.items():
+        for name in names:
+            threshold = max(2, len(name) // 3)
+            if _edit_distance(key, name.lower()) <= threshold:
+                return value
+    return None
 
 
 def parse_args() -> argparse.Namespace:
@@ -149,7 +204,14 @@ def format_observation(obs: ExperimentObservation) -> str:
         parts.append("History:")
         for step in obs.pipeline_history[-5:]:
             tag = "OK" if step.success else "FAIL"
-            parts.append(f"  [{tag}] {step.action_type.value}: {step.output_summary[:100]}")
+            line = f"  [{tag}] {step.action_type.value}: {step.output_summary[:100]}"
+            if step.parameters:
+                line += f" | params={compact_preview(step.parameters, 120)}"
+            parts.append(line)
+    if obs.latest_output and obs.latest_output.data:
+        parts.append(
+            f"Latest output data: {compact_preview(obs.latest_output.data, 200)}"
+        )
     if obs.rule_violations:
         parts.append(f"Violations: {obs.rule_violations}")
     if obs.discovered_markers:
@@ -368,15 +430,65 @@ def content_to_text(content: Any) -> str:
     return str(content).strip()
 
 
+def _repair_truncated_json(text: str) -> Optional[str]:
+    """Try to repair JSON truncated mid-value (common with small LLMs)."""
+    s = text.strip()
+    if not s.startswith("{"):
+        return None
+
+    in_string = False
+    escape = False
+    for ch in s:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+
+    if in_string:
+        s += '"'
+
+    open_braces = s.count("{") - s.count("}")
+    open_brackets = s.count("[") - s.count("]")
+    s += "]" * max(0, open_brackets)
+    s += "}" * max(0, open_braces)
+
+    try:
+        obj = json.loads(s)
+        if isinstance(obj, dict):
+            return s
+    except json.JSONDecodeError:
+        pass
+
+    s = re.sub(r',\s*([}\]])', r'\1', s)
+    try:
+        obj = json.loads(s)
+        if isinstance(obj, dict):
+            return s
+    except json.JSONDecodeError:
+        pass
+    return None
+
+
+def _strip_js_comments(text: str) -> str:
+    """Remove // and /* */ comments that small LLMs inject into JSON."""
+    text = re.sub(r'//[^\n]*', '', text)
+    text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+    return text
+
+
 def extract_json_object(text: str) -> Optional[Dict[str, Any]]:
-    stripped = text.strip()
+    stripped = _strip_js_comments(text).strip()
     fence_prefix = "```"
     if stripped.startswith(fence_prefix) and stripped.endswith(fence_prefix):
         lines = stripped.splitlines()
         if len(lines) >= 3:
             stripped = "\n".join(lines[1:-1]).strip()
 
-    candidates = [stripped]
+    candidates: List[str] = [stripped]
     start = stripped.find("{")
     while start != -1:
         depth = 0
@@ -391,6 +503,14 @@ def extract_json_object(text: str) -> Optional[Dict[str, Any]]:
                     break
         start = stripped.find("{", start + 1)
 
+    first_brace = stripped.find("{")
+    if first_brace != -1:
+        repaired = _repair_truncated_json(stripped[first_brace:])
+        if repaired is not None:
+            candidates.append(repaired)
+
+    candidates.sort(key=len, reverse=True)
+
     for candidate in candidates:
         try:
             parsed = json.loads(candidate)
@@ -398,6 +518,7 @@ def extract_json_object(text: str) -> Optional[Dict[str, Any]]:
             continue
         if isinstance(parsed, dict):
             return parsed
+
     return None
 
 
@@ -406,25 +527,33 @@ def parse_action_completion(text: str) -> Optional[ExperimentAction]:
     if payload is None:
         return None
 
-    action_type = payload.get("action_type")
+    action_type = get_payload_value(payload, "action_type")
     if action_type not in VALID_ACTION_TYPES:
         return None
 
-    parameters = payload.get("parameters") or {}
+    parameters = get_payload_value(payload, "parameters", "params") or {}
     if not isinstance(parameters, dict):
         parameters = {}
 
-    confidence = payload.get("confidence", 0.5)
+    confidence = get_payload_value(payload, "confidence")
+    if confidence is None:
+        confidence = 0.5
     try:
         confidence = float(confidence)
     except (TypeError, ValueError):
         confidence = 0.5
 
+    justification = get_payload_value(
+        payload, "justification", "reasoning", "rationale"
+    )
+    if justification is not None and not isinstance(justification, str):
+        justification = compact_preview(justification, 200)
+
     return ExperimentAction(
         action_type=ActionType(action_type),
-        method=payload.get("method"),
+        method=get_payload_value(payload, "method"),
         parameters=parameters,
-        justification=payload.get("justification"),
+        justification=justification,
         confidence=min(1.0, max(0.0, confidence)),
     )
 

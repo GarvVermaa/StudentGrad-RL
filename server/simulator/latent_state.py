@@ -88,6 +88,8 @@ class ExperimentProgress(BaseModel):
     networks_inferred: bool = False
     markers_discovered: bool = False
     markers_validated: bool = False
+    followup_designed: bool = False
+    subagent_review_requested: bool = False
     conclusion_reached: bool = False
 
     n_cells_sequenced: Optional[int] = None
