@@ -1251,7 +1251,10 @@ class TaskSpec(BaseModel):
 
 
 class ConclusionClaim(BaseModel):
-    claim: str
+    claim: str = ""
+    top_markers: List[str] = Field(default_factory=list)
+    causal_mechanisms: List[str] = Field(default_factory=list)
+    predicted_pathways: Dict[str, float] = Field(default_factory=dict)
     evidence_steps: List[int] = Field(default_factory=list)
     confidence: float = Field(0.5, ge=0.0, le=1.0)
     claim_type: str = "correlational"

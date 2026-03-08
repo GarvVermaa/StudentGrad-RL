@@ -36,6 +36,11 @@ from models import (
     WET_LAB_ACTIONS,
 )
 
+from server.biology.gene_index import (
+    marker_set_score,
+    mechanism_set_score,
+    score_pathways,
+)
 from server.simulator.latent_state import FullLatentState
 
 
@@ -258,9 +263,38 @@ class RewardComputer:
     def _calibration(
         self, s: FullLatentState, conclusions: List[ConclusionClaim]
     ) -> float:
+        """Structured set-similarity calibration against hidden ground truth.
+
+        Uses pathway-weighted Gaussian similarity for markers, semantic
+        similarity for mechanisms, and activity-weighted matching for pathways.
+        Falls back to legacy substring matching when structured fields are empty.
+        """
         if not conclusions:
             return 0.0
 
+        pred_markers = [g for c in conclusions for g in c.top_markers]
+        pred_mechs = [m for c in conclusions for m in c.causal_mechanisms]
+        pred_pathways = {
+            p: v for c in conclusions for p, v in c.predicted_pathways.items()
+        }
+
+        has_structured = bool(pred_markers or pred_mechs or pred_pathways)
+
+        if has_structured:
+            m_score = marker_set_score(pred_markers, s.biology.true_markers)
+            mech_score = mechanism_set_score(
+                pred_mechs, s.biology.causal_mechanisms
+            )
+            pw_score = score_pathways(pred_pathways, s.biology.true_pathways)
+            return 0.50 * m_score + 0.35 * mech_score + 0.15 * pw_score
+
+        return self._legacy_calibration(s, conclusions)
+
+    @staticmethod
+    def _legacy_calibration(
+        s: FullLatentState, conclusions: List[ConclusionClaim]
+    ) -> float:
+        """Substring-based calibration kept for backward compatibility."""
         true_mechanisms = set(s.biology.causal_mechanisms)
         true_markers = set(s.biology.true_markers)
         score = 0.0
@@ -301,13 +335,36 @@ class RewardComputer:
     def _overconfidence_penalty(
         self, s: FullLatentState, conclusions: List[ConclusionClaim]
     ) -> float:
-        """Penalise high-confidence claims that disagree with ground truth."""
+        """Penalise high-confidence claims that disagree with ground truth.
+
+        Checks structured fields (top_markers, causal_mechanisms) first;
+        falls back to claim substring matching for backward compatibility.
+        """
         penalty = 0.0
-        true_set = set(
-            m.lower() for m in s.biology.causal_mechanisms + s.biology.true_markers
-        )
+        true_markers_lower = {m.lower() for m in s.biology.true_markers}
+        true_mechs_lower = {m.lower() for m in s.biology.causal_mechanisms}
+        true_set = true_markers_lower | true_mechs_lower
+
         for c in conclusions:
-            is_correct = any(t in c.claim.lower() for t in true_set)
-            if c.confidence > 0.8 and not is_correct:
+            if c.confidence <= 0.8:
+                continue
+
+            has_structured = bool(c.top_markers or c.causal_mechanisms)
+            if has_structured:
+                marker_hit = any(
+                    g.upper().strip() in {m.upper() for m in s.biology.true_markers}
+                    for g in c.top_markers
+                )
+                mech_hit = any(
+                    any(kw in m.lower() for kw in t.lower().split())
+                    for m in c.causal_mechanisms
+                    for t in s.biology.causal_mechanisms
+                )
+                is_correct = marker_hit or mech_hit
+            else:
+                is_correct = any(t in c.claim.lower() for t in true_set)
+
+            if not is_correct:
                 penalty -= 0.5 * c.confidence
+
         return penalty

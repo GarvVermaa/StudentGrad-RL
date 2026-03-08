@@ -36,6 +36,9 @@ Other actions: select_cohort, culture_cells, perturb_gene, perturb_compound,
 
 Respond with ONLY valid JSON, nothing else:
 {"action_type": "...", "method": null, "parameters": {}, "justification": "...", "confidence": 0.8}
+
+For synthesize_conclusion, use structured claims:
+{"action_type": "synthesize_conclusion", "parameters": {"claims": [{"top_markers": ["GENE1", "GENE2"], "causal_mechanisms": ["mechanism description"], "predicted_pathways": {"pathway_name": 0.8}, "confidence": 0.8, "claim_type": "causal", "claim": "optional free text"}]}, "justification": "...", "confidence": 0.8}
 """
 
 HEURISTIC_SEQUENCE = [
@@ -229,7 +232,17 @@ def build_experiment_action(
         parameters = {"marker": discovered_markers[0] if discovered_markers else "SPP1"}
         justification = "Validate the strongest discovered marker."
     elif action_type == ActionType.SYNTHESIZE_CONCLUSION:
-        parameters = {"claims": []}
+        top = list(discovered_markers[:5]) if discovered_markers else []
+        parameters = {
+            "claims": [{
+                "top_markers": top,
+                "causal_mechanisms": [],
+                "predicted_pathways": {},
+                "confidence": 0.6,
+                "claim_type": "correlational",
+                "claim": "",
+            }],
+        }
         justification = "Summarize the current evidence into a conclusion."
 
     return ExperimentAction(
@@ -242,7 +255,9 @@ def build_experiment_action(
 
 
 def selected_scenarios(requested: Optional[Sequence[str]]) -> List[str]:
-    available = [scenario.name for scenario in SCENARIO_LIBRARY]
+    from server.tasks.procedural_generator import generate_procedural_scenarios
+    all_scenarios = list(SCENARIO_LIBRARY) + generate_procedural_scenarios(n=20, seed=42)
+    available = [scenario.name for scenario in all_scenarios]
     if not requested:
         return available
     unknown = sorted(set(requested) - set(available))

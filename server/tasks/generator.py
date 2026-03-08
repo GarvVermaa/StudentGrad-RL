@@ -24,6 +24,7 @@ from server.simulator.latent_state import (
     TechnicalState,
 )
 from .scenarios import SCENARIO_LIBRARY, Scenario
+from .procedural_generator import generate_procedural_scenarios
 
 
 class TaskGenerator:
@@ -34,7 +35,10 @@ class TaskGenerator:
         scenarios: Optional[List[Scenario]] = None,
         domain_randomise: bool = True,
     ):
-        self.scenarios = scenarios or SCENARIO_LIBRARY
+        if scenarios is not None:
+            self.scenarios = scenarios
+        else:
+            self.scenarios = list(SCENARIO_LIBRARY) + generate_procedural_scenarios(n=20, seed=42)
         self.domain_randomise = domain_randomise
 
     def generate(

@@ -63,6 +63,9 @@ Other actions: select_cohort, culture_cells, perturb_gene, perturb_compound,
 
 Respond with ONLY valid JSON, nothing else:
 {"action_type": "...", "method": null, "parameters": {}, "justification": "...", "confidence": 0.8}
+
+For synthesize_conclusion, use structured claims:
+{"action_type": "synthesize_conclusion", "parameters": {"claims": [{"top_markers": ["GENE1", "GENE2"], "causal_mechanisms": ["mechanism description"], "predicted_pathways": {"pathway_name": 0.8}, "confidence": 0.8, "claim_type": "causal", "claim": "optional free text"}]}, "justification": "...", "confidence": 0.8}
 """
 
 
@@ -456,6 +459,12 @@ def main():
         log("  Conclusions:")
         for c in obs.conclusions:
             log(f"    [{c.claim_type}, conf={c.confidence:.2f}] {c.claim}")
+            if c.top_markers:
+                log(f"      Markers: {c.top_markers}")
+            if c.causal_mechanisms:
+                log(f"      Mechanisms: {c.causal_mechanisms}")
+            if c.predicted_pathways:
+                log(f"      Pathways: {c.predicted_pathways}")
     log("=" * 70)
 
 
