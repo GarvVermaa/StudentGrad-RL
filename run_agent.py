@@ -16,6 +16,7 @@ from models import (
     ActionType,
     ExperimentAction,
     ExperimentObservation,
+    OutputType,
     build_agent_observation_context,
     build_agent_system_prompt,
 )
@@ -205,6 +206,13 @@ def _strip_js_comments(text: str) -> str:
 
 def extract_json_object(text: str) -> Optional[Dict[str, Any]]:
     stripped = _normalize_jsonish_text(text).strip()
+    if stripped.startswith('"') and stripped.endswith('"'):
+        try:
+            unwrapped = json.loads(stripped)
+        except json.JSONDecodeError:
+            unwrapped = None
+        if isinstance(unwrapped, str):
+            stripped = _normalize_jsonish_text(unwrapped).strip()
     fence_prefix = "```"
     if stripped.startswith(fence_prefix) and stripped.endswith(fence_prefix):
         lines = stripped.splitlines()
@@ -366,34 +374,34 @@ def parse_action(text: str) -> Optional[ExperimentAction]:
     if d is not None:
         action_type = normalize_action_type(get_payload_value(d, "action_type"))
         if action_type is None:
-            return None
+            pass
+        else:
+            parameters = get_payload_value(d, "parameters", "params") or {}
+            if not isinstance(parameters, dict):
+                parameters = {}
 
-        parameters = get_payload_value(d, "parameters", "params") or {}
-        if not isinstance(parameters, dict):
-            parameters = {}
+            confidence = get_payload_value(d, "confidence")
+            if confidence is None:
+                confidence = 0.5
+            try:
+                confidence = float(confidence)
+            except (TypeError, ValueError):
+                confidence = 0.5
 
-        confidence = get_payload_value(d, "confidence")
-        if confidence is None:
-            confidence = 0.5
-        try:
-            confidence = float(confidence)
-        except (TypeError, ValueError):
-            confidence = 0.5
+            justification = get_payload_value(
+                d, "justification", "justifyement", "reasoning", "rationale", "reason"
+            )
+            if justification is not None and not isinstance(justification, str):
+                justification = compact_preview(justification, 200)
+            method = normalize_optional_string(get_payload_value(d, "method"))
 
-        justification = get_payload_value(
-            d, "justification", "reasoning", "rationale", "reason"
-        )
-        if justification is not None and not isinstance(justification, str):
-            justification = compact_preview(justification, 200)
-        method = normalize_optional_string(get_payload_value(d, "method"))
-
-        return ExperimentAction(
-            action_type=ActionType(action_type),
-            method=method,
-            parameters=parameters,
-            justification=justification,
-            confidence=min(1.0, max(0.0, confidence)),
-        )
+            return ExperimentAction(
+                action_type=ActionType(action_type),
+                method=method,
+                parameters=parameters,
+                justification=justification,
+                confidence=min(1.0, max(0.0, confidence)),
+            )
 
     action_match = re.search(
         r'["\']action_type["\']\s*:\s*["\']([^"\']+)',
@@ -473,6 +481,73 @@ def should_force_terminal_conclusion(
     )
 
 
+def _unique_nonempty(items: List[str], limit: int = 5) -> List[str]:
+    seen: set[str] = set()
+    result: List[str] = []
+    for raw in items:
+        value = normalize_optional_string(raw)
+        if not value:
+            continue
+        key = value.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _infer_conclusion_evidence(
+    obs: ExperimentObservation,
+) -> tuple[List[str], List[str], Dict[str, float]]:
+    top_markers = _unique_nonempty(list(obs.discovered_markers), limit=5)
+    causal_mechanisms = _unique_nonempty(list(obs.candidate_mechanisms), limit=5)
+    predicted_pathways: Dict[str, float] = {}
+
+    for output in reversed(obs.all_outputs):
+        if not output.success:
+            continue
+
+        data = output.data or {}
+        if not top_markers:
+            if output.output_type == OutputType.MARKER_RESULT:
+                top_markers = _unique_nonempty(list(data.get("markers", [])), limit=5)
+            elif output.output_type == OutputType.DE_RESULT:
+                top_markers = _unique_nonempty(
+                    [item.get("gene") for item in data.get("top_genes", []) if isinstance(item, dict)],
+                    limit=5,
+                )
+
+        if output.output_type == OutputType.PATHWAY_RESULT and not predicted_pathways:
+            for item in data.get("top_pathways", []):
+                if not isinstance(item, dict):
+                    continue
+                pathway = normalize_optional_string(item.get("pathway"))
+                score = item.get("score")
+                if pathway and isinstance(score, (int, float)):
+                    predicted_pathways[pathway] = float(score)
+                    if len(predicted_pathways) >= 5:
+                        break
+
+        if not causal_mechanisms:
+            if output.output_type == OutputType.PATHWAY_RESULT:
+                causal_mechanisms = _unique_nonempty(
+                    [item.get("pathway") for item in data.get("top_pathways", []) if isinstance(item, dict)],
+                    limit=5,
+                )
+            elif output.output_type == OutputType.NETWORK_RESULT:
+                causal_mechanisms = _unique_nonempty(
+                    list(data.get("top_regulators", [])),
+                    limit=5,
+                )
+
+        if top_markers and causal_mechanisms and predicted_pathways:
+            break
+
+    return top_markers, causal_mechanisms, predicted_pathways
+
+
 def ensure_conclusion_claims(
     obs: ExperimentObservation,
     action: ExperimentAction,
@@ -490,8 +565,7 @@ def ensure_conclusion_claims(
                 return action.model_copy(update={"parameters": parameters})
             return action
 
-    top_markers = list(obs.discovered_markers[:5])
-    causal_mechanisms = list(obs.candidate_mechanisms[:5])
+    top_markers, causal_mechanisms, predicted_pathways = _infer_conclusion_evidence(obs)
     claim_type = "causal" if causal_mechanisms else "correlational"
     conditions = " vs ".join(obs.task.conditions[:2]) if obs.task.conditions else "the task conditions"
     claim = action.justification or f"Final synthesis for {conditions}."
@@ -499,7 +573,7 @@ def ensure_conclusion_claims(
     parameters["claims"] = [{
         "top_markers": top_markers,
         "causal_mechanisms": causal_mechanisms,
-        "predicted_pathways": {},
+        "predicted_pathways": predicted_pathways,
         "confidence": action.confidence,
         "claim_type": claim_type,
         "claim": claim,

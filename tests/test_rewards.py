@@ -108,7 +108,13 @@ class TestTerminalReward:
                 claim_type="causal",
             ),
         ]
-        rb = rc.terminal_reward(state, claims, [])
+        rb = rc.terminal_reward(
+            state,
+            claims,
+            [],
+            discovered_markers=["NPPA"],
+            candidate_mechanisms=["TGF-beta-driven fibrosis"],
+        )
         assert rb.terminal > 0
 
     def test_overconfident_wrong_claim_penalised(self):
@@ -164,4 +170,47 @@ class TestTerminalReward:
 
         assert aligned.components["discovery_alignment"] > misaligned.components["discovery_alignment"]
         assert aligned.components["discovery_error_penalty"] > misaligned.components["discovery_error_penalty"]
+        assert aligned.terminal > misaligned.terminal
+
+    def test_conclusion_error_penalizes_wrong_structured_claims(self):
+        rc = RewardComputer()
+        state = FullLatentState(
+            biology=LatentBiologicalState(
+                true_markers=["NPPA", "NPPB"],
+                causal_mechanisms=["TGF-beta-driven fibrosis"],
+            ),
+            progress=ExperimentProgress(
+                data_normalized=True,
+                de_performed=True,
+                markers_discovered=True,
+                pathways_analyzed=True,
+                conclusion_reached=True,
+            ),
+            resources=ResourceState(budget_total=100_000, budget_used=40_000),
+        )
+        aligned = rc.terminal_reward(
+            state,
+            [
+                ConclusionClaim(
+                    top_markers=["NPPA", "NPPB"],
+                    causal_mechanisms=["TGF-beta-driven fibrosis"],
+                    confidence=0.8,
+                ),
+            ],
+            [],
+        )
+        misaligned = rc.terminal_reward(
+            state,
+            [
+                ConclusionClaim(
+                    top_markers=["WRONG1"],
+                    causal_mechanisms=["unrelated process"],
+                    confidence=0.8,
+                ),
+            ],
+            [],
+        )
+
+        assert aligned.components["conclusion_alignment"] > misaligned.components["conclusion_alignment"]
+        assert aligned.components["conclusion_error_penalty"] > misaligned.components["conclusion_error_penalty"]
         assert aligned.terminal > misaligned.terminal

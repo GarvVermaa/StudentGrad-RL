@@ -1,4 +1,4 @@
-"""Train a planner with TRL GRPO and OpenEnv rewards."""
+"""Train a self-driving lab planner with TRL GRPO and OpenEnv rewards."""
 
 from __future__ import annotations
 
@@ -21,29 +21,53 @@ from models import (
 from server.hackathon_environment import BioExperimentEnvironment
 from server.tasks.scenarios import SCENARIO_LIBRARY
 
-DEFAULT_MODEL_ID = "Qwen/Qwen3.5-0.8B"
+DEFAULT_MODEL_ID = "Qwen/Qwen3.5-4B"
 DEFAULT_OUTPUT_DIR = "training/grpo-output"
 DEFAULT_BASE_URL = "http://localhost:8000"
+DEFAULT_COMPLETION_TOKEN_BUDGET = 160
 INVALID_ACTION_PENALTY = -2.0
 ENVIRONMENT_ERROR_PENALTY = -4.0
 
 SYSTEM_PROMPT = build_agent_system_prompt()
 
+ACTION_TYPES = [action.value for action in ActionType]
+ACTION_TYPE_ALIASES = {
+    "collect_samples": ActionType.COLLECT_SAMPLE.value,
+    "collect_sample_from_bone_marrow": ActionType.COLLECT_SAMPLE.value,
+    "collect_samples_from_bone_marrow": ActionType.COLLECT_SAMPLE.value,
+    "prepare_sc_library": ActionType.PREPARE_LIBRARY.value,
+    "sequence_single_cells": ActionType.SEQUENCE_CELLS.value,
+    "qc": ActionType.RUN_QC.value,
+    "run_quality_control": ActionType.RUN_QC.value,
+    "cluster": ActionType.CLUSTER_CELLS.value,
+    "de_analysis": ActionType.DIFFERENTIAL_EXPRESSION.value,
+    "differential_expression_analysis": ActionType.DIFFERENTIAL_EXPRESSION.value,
+    "trajectory_inference": ActionType.TRAJECTORY_ANALYSIS.value,
+    "infer_trajectory": ActionType.TRAJECTORY_ANALYSIS.value,
+    "network_inference": ActionType.REGULATORY_NETWORK_INFERENCE.value,
+    "select_markers": ActionType.MARKER_SELECTION.value,
+    "final_conclusion": ActionType.SYNTHESIZE_CONCLUSION.value,
+}
+
 HEURISTIC_SEQUENCE = [
     ActionType.COLLECT_SAMPLE,
+    ActionType.SELECT_COHORT,
     ActionType.PREPARE_LIBRARY,
     ActionType.SEQUENCE_CELLS,
     ActionType.RUN_QC,
     ActionType.FILTER_DATA,
     ActionType.NORMALIZE_DATA,
+    ActionType.INTEGRATE_BATCHES,
     ActionType.CLUSTER_CELLS,
     ActionType.DIFFERENTIAL_EXPRESSION,
     ActionType.PATHWAY_ENRICHMENT,
     ActionType.MARKER_SELECTION,
+    ActionType.TRAJECTORY_ANALYSIS,
+    ActionType.REGULATORY_NETWORK_INFERENCE,
     ActionType.SYNTHESIZE_CONCLUSION,
 ]
 
-VALID_ACTION_TYPES = {action.value for action in ActionType}
+VALID_ACTION_TYPES = set(ACTION_TYPES)
 
 
 def compact_preview(value: Any, max_chars: int = 160) -> str:
@@ -129,7 +153,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Enable domain randomisation while building prompts and local rewards.",
     )
     parser.add_argument("--num-generations", type=int, default=2)
-    parser.add_argument("--max-completion-length", type=int, default=220)
+    parser.add_argument(
+        "--max-completion-length",
+        type=int,
+        default=DEFAULT_COMPLETION_TOKEN_BUDGET,
+    )
     parser.add_argument("--max-prompt-length", type=int, default=768)
     parser.add_argument("--per-device-train-batch-size", type=int, default=2)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
@@ -197,23 +225,42 @@ def format_observation(obs: ExperimentObservation) -> str:
     if context:
         parts.append(context)
     if obs.pipeline_history:
-        parts.append("History:")
-        for step in obs.pipeline_history[-5:]:
+        last5 = obs.pipeline_history[-5:]
+        parts.append("Recent history:")
+        for step in last5:
             tag = "OK" if step.success else "FAIL"
-            line = f"  [{tag}] {step.action_type.value}: {step.output_summary[:100]}"
-            if step.parameters:
-                line += f" | params={compact_preview(step.parameters, 120)}"
+            line = f"  [{tag}] {step.action_type.value}"
+            if step.method:
+                line += f" ({step.method})"
+            line += f": {step.output_summary[:80]}"
             parts.append(line)
+        completed = {
+            step.action_type for step in obs.pipeline_history if step.success
+        }
+        if completed:
+            parts.append(
+                "Completed steps (do NOT repeat): "
+                + ", ".join(sorted(action.value for action in completed))
+            )
+        remaining = [
+            action.value for action in HEURISTIC_SEQUENCE if action not in completed
+        ]
+        if remaining:
+            parts.append(f"Remaining steps (choose one): {', '.join(remaining)}")
     if obs.latest_output and obs.latest_output.data:
         parts.append(
-            f"Latest output data: {compact_preview(obs.latest_output.data, 200)}"
+            f"Latest data: {compact_preview(obs.latest_output.data, 200)}"
         )
     if obs.rule_violations:
-        parts.append(f"Violations: {obs.rule_violations}")
+        parts.append(f"VIOLATIONS: {obs.rule_violations}")
     if obs.discovered_markers:
-        parts.append(f"Markers: {obs.discovered_markers[:5]}")
+        parts.append(f"Markers found so far: {obs.discovered_markers[:5]}")
     if obs.candidate_mechanisms:
-        parts.append(f"Mechanisms: {obs.candidate_mechanisms[:5]}")
+        parts.append(f"Candidate mechanisms: {obs.candidate_mechanisms[:5]}")
+    parts.append(
+        'Output ONLY a single JSON object with these exact keys, no comments, no extra text:\n'
+        '{"action_type": "<one of the remaining steps>", "method": null, "parameters": {}, "justification": "<why>", "confidence": 0.8}'
+    )
     return "\n".join(parts)
 
 
@@ -251,6 +298,7 @@ def default_comparison_name(conditions: Sequence[str]) -> str:
 def build_experiment_action(
     action_type: ActionType,
     discovered_markers: Sequence[str],
+    candidate_mechanisms: Sequence[str],
     conditions: Sequence[str],
 ) -> ExperimentAction:
     method = None
@@ -260,9 +308,27 @@ def build_experiment_action(
     if action_type == ActionType.COLLECT_SAMPLE:
         parameters = {"n_samples": 6}
         justification = "Collect enough samples to start the experiment."
+    elif action_type == ActionType.SELECT_COHORT:
+        parameters = {
+            "comparison": default_comparison_name(conditions),
+            "conditions": list(conditions[:2]) or ["disease", "healthy"],
+        }
+        justification = "Define the cohort split before committing to downstream analysis."
     elif action_type == ActionType.PREPARE_LIBRARY:
         method = "10x_chromium"
         justification = "Prepare a single-cell library for sequencing."
+    elif action_type == ActionType.CULTURE_CELLS:
+        method = "organoid_culture"
+        parameters = {"duration_days": 7}
+        justification = "Expand viable cells before a perturbation or profiling step."
+    elif action_type == ActionType.PERTURB_GENE:
+        method = "CRISPRi"
+        parameters = {"target_gene": candidate_mechanisms[0] if candidate_mechanisms else "STAT3"}
+        justification = "Test whether a candidate regulator causally shifts cell state."
+    elif action_type == ActionType.PERTURB_COMPOUND:
+        method = "small_molecule_screen"
+        parameters = {"compound": candidate_mechanisms[0] if candidate_mechanisms else "TGFb_inhibitor"}
+        justification = "Probe the pathway hypothesis with a targeted compound perturbation."
     elif action_type == ActionType.SEQUENCE_CELLS:
         method = "NovaSeq"
         justification = "Generate reads for downstream single-cell analysis."
@@ -275,6 +341,9 @@ def build_experiment_action(
     elif action_type == ActionType.NORMALIZE_DATA:
         method = "scanpy.pp.normalize_total"
         justification = "Normalize counts for comparable expression profiles."
+    elif action_type == ActionType.INTEGRATE_BATCHES:
+        method = "scanorama.integrate"
+        justification = "Correct batch effects before comparing cellular programs."
     elif action_type == ActionType.CLUSTER_CELLS:
         method = "scanpy.tl.leiden"
         justification = "Resolve cell states before interpretation."
@@ -291,20 +360,34 @@ def build_experiment_action(
     elif action_type == ActionType.MARKER_SELECTION:
         method = "scanpy.tl.rank_genes_groups"
         justification = "Nominate marker genes for validation."
+    elif action_type == ActionType.REGULATORY_NETWORK_INFERENCE:
+        method = "pySCENIC"
+        justification = "Infer upstream regulators behind the observed state changes."
     elif action_type == ActionType.VALIDATE_MARKER:
         method = "qPCR"
         parameters = {"marker": discovered_markers[0] if discovered_markers else "SPP1"}
         justification = "Validate the strongest discovered marker."
+    elif action_type == ActionType.DESIGN_FOLLOWUP:
+        method = "followup_plan"
+        parameters = {"priority_hypothesis": candidate_mechanisms[0] if candidate_mechanisms else "fibrotic_activation"}
+        justification = "Propose the next experiment to disambiguate remaining uncertainty."
+    elif action_type == ActionType.REQUEST_SUBAGENT_REVIEW:
+        method = "peer_review"
+        parameters = {"focus": "experimental_design"}
+        justification = "Request a review of the current self-driving lab plan."
     elif action_type == ActionType.SYNTHESIZE_CONCLUSION:
         top = list(discovered_markers[:5]) if discovered_markers else []
         parameters = {
             "claims": [{
                 "top_markers": top,
-                "causal_mechanisms": [],
-                "predicted_pathways": {},
+                "causal_mechanisms": list(candidate_mechanisms[:5]),
+                "predicted_pathways": {
+                    mechanism: 0.6
+                    for mechanism in list(candidate_mechanisms[:3])
+                },
                 "confidence": 0.6,
-                "claim_type": "correlational",
-                "claim": "",
+                "claim_type": "causal" if candidate_mechanisms else "correlational",
+                "claim": f"Synthesis for {default_comparison_name(conditions)}.",
             }],
         }
         justification = "Summarize the current evidence into a conclusion."
@@ -375,6 +458,7 @@ def build_prompt_examples(
                     [action.action_type for action in history_actions],
                 ),
                 discovered_markers=obs.discovered_markers,
+                candidate_mechanisms=obs.candidate_mechanisms,
                 conditions=obs.task.conditions,
             )
             examples.append({
@@ -543,11 +627,145 @@ def normalize_optional_string(value: Any) -> Optional[str]:
     return compact_preview(value, 80)
 
 
+def normalize_action_type(raw_action_type: Any) -> Optional[str]:
+    if not isinstance(raw_action_type, str):
+        return None
+
+    candidate = raw_action_type.strip().lower()
+    if candidate in ACTION_TYPES:
+        return candidate
+    if candidate in ACTION_TYPE_ALIASES:
+        return ACTION_TYPE_ALIASES[candidate]
+
+    candidate = re.sub(r"[^a-z0-9]+", "_", candidate).strip("_")
+    if candidate in ACTION_TYPES:
+        return candidate
+    if candidate in ACTION_TYPE_ALIASES:
+        return ACTION_TYPE_ALIASES[candidate]
+
+    heuristics = [
+        (("collect", "sample"), ActionType.COLLECT_SAMPLE.value),
+        (("cohort",), ActionType.SELECT_COHORT.value),
+        (("library",), ActionType.PREPARE_LIBRARY.value),
+        (("culture",), ActionType.CULTURE_CELLS.value),
+        (("perturb", "gene"), ActionType.PERTURB_GENE.value),
+        (("perturb", "compound"), ActionType.PERTURB_COMPOUND.value),
+        (("sequence",), ActionType.SEQUENCE_CELLS.value),
+        (("qc",), ActionType.RUN_QC.value),
+        (("quality", "control"), ActionType.RUN_QC.value),
+        (("filter",), ActionType.FILTER_DATA.value),
+        (("normal",), ActionType.NORMALIZE_DATA.value),
+        (("integrat", "batch"), ActionType.INTEGRATE_BATCHES.value),
+        (("cluster",), ActionType.CLUSTER_CELLS.value),
+        (("differential", "expression"), ActionType.DIFFERENTIAL_EXPRESSION.value),
+        (("pathway",), ActionType.PATHWAY_ENRICHMENT.value),
+        (("trajectory",), ActionType.TRAJECTORY_ANALYSIS.value),
+        (("network",), ActionType.REGULATORY_NETWORK_INFERENCE.value),
+        (("marker",), ActionType.MARKER_SELECTION.value),
+        (("validat", "marker"), ActionType.VALIDATE_MARKER.value),
+        (("followup",), ActionType.DESIGN_FOLLOWUP.value),
+        (("review",), ActionType.REQUEST_SUBAGENT_REVIEW.value),
+        (("conclusion",), ActionType.SYNTHESIZE_CONCLUSION.value),
+    ]
+    for fragments, normalized in heuristics:
+        if all(fragment in candidate for fragment in fragments):
+            return normalized
+    return None
+
+
+def _unique_nonempty(items: Sequence[Any], limit: int = 5) -> List[str]:
+    seen: set[str] = set()
+    result: List[str] = []
+    for raw in items:
+        value = normalize_optional_string(raw)
+        if not value:
+            continue
+        key = value.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _infer_conclusion_evidence(
+    obs: ExperimentObservation,
+) -> Tuple[List[str], List[str], Dict[str, float]]:
+    top_markers = _unique_nonempty(list(obs.discovered_markers), limit=5)
+    causal_mechanisms = _unique_nonempty(list(obs.candidate_mechanisms), limit=5)
+    predicted_pathways: Dict[str, float] = {}
+
+    for output in reversed(obs.all_outputs):
+        if not output.success:
+            continue
+        data = output.data or {}
+
+        if not top_markers:
+            markers = data.get("markers", [])
+            if isinstance(markers, list):
+                top_markers = _unique_nonempty(markers, limit=5)
+        if not causal_mechanisms:
+            regulators = data.get("top_regulators", [])
+            if isinstance(regulators, list):
+                causal_mechanisms = _unique_nonempty(regulators, limit=5)
+        if not predicted_pathways:
+            for item in data.get("top_pathways", []):
+                if not isinstance(item, dict):
+                    continue
+                pathway = normalize_optional_string(item.get("pathway"))
+                score = item.get("score")
+                if pathway and isinstance(score, (int, float)):
+                    predicted_pathways[pathway] = float(score)
+                    if len(predicted_pathways) >= 5:
+                        break
+        if top_markers and causal_mechanisms and predicted_pathways:
+            break
+
+    return top_markers, causal_mechanisms, predicted_pathways
+
+
+def ensure_conclusion_claims(
+    obs: ExperimentObservation,
+    action: ExperimentAction,
+) -> ExperimentAction:
+    if action.action_type != ActionType.SYNTHESIZE_CONCLUSION:
+        return action
+
+    parameters = dict(action.parameters or {})
+    raw_claims = parameters.get("claims")
+    if isinstance(raw_claims, list):
+        normalized_claims = [claim for claim in raw_claims if isinstance(claim, dict)]
+        if normalized_claims:
+            parameters["claims"] = normalized_claims
+            if parameters != action.parameters:
+                return action.model_copy(update={"parameters": parameters})
+            return action
+
+    top_markers, causal_mechanisms, predicted_pathways = _infer_conclusion_evidence(obs)
+    claim_type = "causal" if causal_mechanisms else "correlational"
+    conditions = " vs ".join(obs.task.conditions[:2]) if obs.task.conditions else "the task conditions"
+    claim = action.justification or f"Final synthesis for {conditions}."
+
+    parameters["claims"] = [{
+        "top_markers": top_markers,
+        "causal_mechanisms": causal_mechanisms,
+        "predicted_pathways": predicted_pathways,
+        "confidence": action.confidence,
+        "claim_type": claim_type,
+        "claim": claim,
+    }]
+    if not action.justification:
+        action = action.model_copy(update={"justification": claim})
+    return action.model_copy(update={"parameters": parameters})
+
+
 def parse_action_completion(text: str) -> Optional[ExperimentAction]:
     payload = extract_json_object(text)
     if payload is not None:
-        action_type = get_payload_value(payload, "action_type")
-        if action_type not in VALID_ACTION_TYPES:
+        action_type = normalize_action_type(get_payload_value(payload, "action_type"))
+        if action_type is None:
             return None
 
         parameters = get_payload_value(payload, "parameters", "params") or {}
@@ -584,8 +802,8 @@ def parse_action_completion(text: str) -> Optional[ExperimentAction]:
     if not action_match:
         return None
 
-    action_type = action_match.group(1).strip()
-    if action_type not in VALID_ACTION_TYPES:
+    action_type = normalize_action_type(action_match.group(1))
+    if action_type is None:
         return None
 
     method_match = re.search(
@@ -733,6 +951,7 @@ class OpenEnvReward:
             obs = env.step(previous_action)
             if obs.done:
                 return float(obs.reward)
+        action = ensure_conclusion_claims(obs, action)
         obs = env.step(action)
         return float(obs.reward)
 
@@ -1081,7 +1300,7 @@ def generate_action_with_model(
     tokenizer: Any,
     prompt_or_observation: str | ExperimentObservation,
     *,
-    max_new_tokens: int = 220,
+    max_new_tokens: int = DEFAULT_COMPLETION_TOKEN_BUDGET,
     temperature: float = 0.2,
     top_p: float = 0.9,
     do_sample: bool = True,
@@ -1114,6 +1333,8 @@ def generate_action_with_model(
     new_tokens = output_ids[0][prompt_tokens:]
     response_text = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
     action = parse_action_completion(response_text)
+    if action is not None and isinstance(prompt_or_observation, ExperimentObservation):
+        action = ensure_conclusion_claims(prompt_or_observation, action)
     return {
         "prompt": prompt,
         "response_text": response_text,

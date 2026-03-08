@@ -64,7 +64,7 @@ class TestEnvironmentLifecycle:
             parameters={"assay": "qPCR"},
         ))
         assert obs.latest_output is not None
-        assert obs.latest_output.success is True
+        assert obs.latest_output.success is False
         assert any("follow-up design" in msg.lower() for msg in obs.rule_violations)
 
     def test_conclusion_ends_episode(self):
@@ -81,6 +81,8 @@ class TestEnvironmentLifecycle:
             ExperimentAction(action_type=ActionType.CLUSTER_CELLS),
             ExperimentAction(action_type=ActionType.DIFFERENTIAL_EXPRESSION,
                              parameters={"comparison": "disease_vs_healthy"}),
+            ExperimentAction(action_type=ActionType.PATHWAY_ENRICHMENT),
+            ExperimentAction(action_type=ActionType.MARKER_SELECTION),
             ExperimentAction(
                 action_type=ActionType.SYNTHESIZE_CONCLUSION,
                 parameters={"claims": [
@@ -94,3 +96,33 @@ class TestEnvironmentLifecycle:
 
         assert obs.done is True
         assert obs.reward != 0.0
+
+    def test_blocked_conclusion_does_not_persist_claims(self):
+        env = BioExperimentEnvironment()
+        env.reset()
+
+        pipeline = [
+            ExperimentAction(action_type=ActionType.COLLECT_SAMPLE),
+            ExperimentAction(action_type=ActionType.PREPARE_LIBRARY),
+            ExperimentAction(action_type=ActionType.SEQUENCE_CELLS),
+            ExperimentAction(action_type=ActionType.RUN_QC),
+            ExperimentAction(action_type=ActionType.FILTER_DATA),
+            ExperimentAction(action_type=ActionType.NORMALIZE_DATA),
+            ExperimentAction(action_type=ActionType.CLUSTER_CELLS),
+        ]
+        for action in pipeline:
+            obs = env.step(action)
+            assert obs.latest_output is not None
+            assert obs.latest_output.success is True
+
+        obs = env.step(ExperimentAction(
+            action_type=ActionType.SYNTHESIZE_CONCLUSION,
+            parameters={"claims": [
+                {"claim": "Premature conclusion", "confidence": 0.9},
+            ]},
+        ))
+
+        assert obs.latest_output is not None
+        assert obs.latest_output.success is False
+        assert obs.conclusions == []
+        assert any("markers" in msg.lower() for msg in obs.rule_violations)

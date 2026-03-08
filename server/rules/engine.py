@@ -45,6 +45,16 @@ class RuleEngine:
             p.markers_validated,
         ])
 
+    @staticmethod
+    def _has_marker_evidence(s: FullLatentState) -> bool:
+        p = s.progress
+        return p.markers_discovered or p.markers_validated
+
+    @staticmethod
+    def _has_mechanism_evidence(s: FullLatentState) -> bool:
+        p = s.progress
+        return p.pathways_analyzed or p.networks_inferred
+
     def check(
         self, action: ExperimentAction, state: FullLatentState
     ) -> List[RuleViolation]:
@@ -236,6 +246,20 @@ class RuleEngine:
                     rule_id="premature_conclusion",
                     severity=Severity.HARD,
                     message="Cannot synthesise conclusion without substantive analysis",
+                ))
+
+            if not self._has_marker_evidence(s):
+                vs.append(RuleViolation(
+                    rule_id="conclusion_without_marker_evidence",
+                    severity=Severity.HARD,
+                    message="Cannot synthesise conclusion before discovering or validating markers",
+                ))
+
+            if not self._has_mechanism_evidence(s):
+                vs.append(RuleViolation(
+                    rule_id="conclusion_without_mechanism_evidence",
+                    severity=Severity.HARD,
+                    message="Cannot synthesise conclusion before inferring pathways or mechanisms",
                 ))
 
             claims = action.parameters.get("claims", [])

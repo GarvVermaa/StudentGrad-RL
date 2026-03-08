@@ -55,47 +55,68 @@ class TestPrerequisites:
 
 
 class TestRedundancy:
-    def test_double_qc_is_soft(self):
+    def test_double_qc_is_hard_blocked(self):
         engine = RuleEngine()
         violations = engine.check(
             ExperimentAction(action_type=ActionType.RUN_QC),
             _state(cells_sequenced=True, qc_performed=True),
         )
         hard = engine.hard_violations(violations)
-        soft = engine.soft_violations(violations)
-        assert not hard
-        assert any("redundant" in m.lower() for m in soft)
+        assert any("redundant" in m.lower() for m in hard)
 
-    def test_repeated_followup_design_is_soft(self):
+    def test_repeated_followup_design_is_hard_blocked(self):
         engine = RuleEngine()
         violations = engine.check(
             ExperimentAction(action_type=ActionType.DESIGN_FOLLOWUP),
             _state(followup_designed=True, de_performed=True),
         )
         hard = engine.hard_violations(violations)
-        soft = engine.soft_violations(violations)
-        assert not hard
-        assert any("redundant" in m.lower() for m in soft)
+        assert any("redundant" in m.lower() for m in hard)
 
 
 class TestMetaActionTiming:
-    def test_followup_design_without_analysis_is_soft(self):
+    def test_followup_design_without_analysis_is_hard_blocked(self):
         engine = RuleEngine()
         violations = engine.check(
             ExperimentAction(action_type=ActionType.DESIGN_FOLLOWUP),
             _state(),
         )
-        soft = engine.soft_violations(violations)
-        assert any("follow-up design" in m.lower() for m in soft)
+        hard = engine.hard_violations(violations)
+        assert any("follow-up design" in m.lower() for m in hard)
 
-    def test_subagent_review_without_analysis_is_soft(self):
+    def test_subagent_review_without_analysis_is_hard_blocked(self):
         engine = RuleEngine()
         violations = engine.check(
             ExperimentAction(action_type=ActionType.REQUEST_SUBAGENT_REVIEW),
             _state(),
         )
-        soft = engine.soft_violations(violations)
-        assert any("subagent review" in m.lower() for m in soft)
+        hard = engine.hard_violations(violations)
+        assert any("subagent review" in m.lower() for m in hard)
+
+    def test_conclusion_without_marker_or_mechanism_evidence_is_hard_blocked(self):
+        engine = RuleEngine()
+        violations = engine.check(
+            ExperimentAction(action_type=ActionType.SYNTHESIZE_CONCLUSION),
+            _state(data_normalized=True, cells_clustered=True),
+        )
+        hard = engine.hard_violations(violations)
+        assert any("markers" in m.lower() for m in hard)
+        assert any("pathways or mechanisms" in m.lower() for m in hard)
+
+    def test_conclusion_with_marker_and_mechanism_evidence_is_allowed(self):
+        engine = RuleEngine()
+        violations = engine.check(
+            ExperimentAction(action_type=ActionType.SYNTHESIZE_CONCLUSION),
+            _state(
+                data_normalized=True,
+                cells_clustered=True,
+                markers_discovered=True,
+                pathways_analyzed=True,
+            ),
+        )
+        hard = engine.hard_violations(violations)
+        assert not hard
+
 
 class TestResourceConstraints:
     def test_exhausted_budget_blocked(self):

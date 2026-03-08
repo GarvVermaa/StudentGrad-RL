@@ -43,6 +43,15 @@ def test_parse_action_completion_accepts_reasoning_alias():
     assert action.justification == "Measure quality before filtering."
 
 
+def test_parse_action_completion_normalizes_run_agent_aliases():
+    action = parse_action_completion(
+        '{"action_type":"network_inference","method":"pySCENIC"}'
+    )
+    assert action is not None
+    assert action.action_type == ActionType.REGULATORY_NETWORK_INFERENCE
+    assert action.method == "pySCENIC"
+
+
 def test_build_prompt_examples_contains_reference_action():
     examples = build_prompt_examples(
         dataset_episodes=1,
@@ -55,6 +64,7 @@ def test_build_prompt_examples_contains_reference_action():
     assert len(examples) == 2
     assert examples[0]["scenario_name"] == "cardiac_disease_de"
     assert '"action_type": "collect_sample"' in examples[0]["reference_action"]
+    assert '"action_type": "select_cohort"' in examples[1]["reference_action"]
 
 
 def test_openenv_reward_penalizes_invalid_completion():

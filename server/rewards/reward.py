@@ -24,7 +24,7 @@ The terminal reward adds:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from models import (
     ActionType,
@@ -220,6 +220,13 @@ class RewardComputer:
         rb.components["discovery_alignment"] = discovery_alignment
         rb.components["discovery_error_penalty"] = discovery_error_penalty
 
+        conclusion_alignment = self._conclusion_alignment(state, conclusions)
+        conclusion_error_penalty = -4.0 * (1.0 - conclusion_alignment)
+        if conclusions and conclusion_alignment < 0.25:
+            conclusion_error_penalty -= 1.5
+        rb.components["conclusion_alignment"] = conclusion_alignment
+        rb.components["conclusion_error_penalty"] = conclusion_error_penalty
+
         eff_bonus = (budget_eff + time_eff) / 2.0 if completeness >= 0.3 else 0.0
         rb.terminal = (
             3.0 * completeness
@@ -227,6 +234,7 @@ class RewardComputer:
             + 1.0 * eff_bonus
             + overconf
             + discovery_error_penalty
+            + conclusion_error_penalty
         )
         return rb
 
@@ -466,6 +474,45 @@ class RewardComputer:
             mechanism_precision = mechanism_set_score(
                 s.biology.causal_mechanisms,
                 candidate_mechanisms,
+            )
+            components.append((mechanism_recall + mechanism_precision) / 2.0)
+
+        if not components:
+            return 1.0
+        return sum(components) / len(components)
+
+    def _conclusion_alignment(
+        self,
+        s: FullLatentState,
+        conclusions: List[ConclusionClaim],
+    ) -> float:
+        if not conclusions:
+            return 0.0
+
+        pred_markers = [marker for conclusion in conclusions for marker in conclusion.top_markers]
+        pred_mechanisms = [
+            mechanism
+            for conclusion in conclusions
+            for mechanism in conclusion.causal_mechanisms
+        ]
+
+        if not pred_markers and not pred_mechanisms:
+            return self._legacy_calibration(s, conclusions)
+
+        components: List[float] = []
+        if s.biology.true_markers or pred_markers:
+            marker_recall = marker_set_score(pred_markers, s.biology.true_markers)
+            marker_precision = marker_set_score(s.biology.true_markers, pred_markers)
+            components.append((marker_recall + marker_precision) / 2.0)
+
+        if s.biology.causal_mechanisms or pred_mechanisms:
+            mechanism_recall = mechanism_set_score(
+                pred_mechanisms,
+                s.biology.causal_mechanisms,
+            )
+            mechanism_precision = mechanism_set_score(
+                s.biology.causal_mechanisms,
+                pred_mechanisms,
             )
             components.append((mechanism_recall + mechanism_precision) / 2.0)
 

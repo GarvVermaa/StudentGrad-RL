@@ -132,7 +132,7 @@ class BioExperimentEnvironment(Environment):
         self._outputs.append(result.output)
         self._update_discoveries(action, result.output)
 
-        if action.action_type == ActionType.SYNTHESIZE_CONCLUSION:
+        if action.action_type == ActionType.SYNTHESIZE_CONCLUSION and result.output.success:
             raw_claims = action.parameters.get("claims", [])
             for c in raw_claims:
                 if isinstance(c, dict):
