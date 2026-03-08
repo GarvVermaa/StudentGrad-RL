@@ -1,4 +1,4 @@
-"""Collect trajectories for training and benchmarking this environment."""
+"""Collect trajectories with direct OpenEnv environment access."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Dict, List, Sequence
 
 from models import ActionType, ExperimentAction
+from server.hackathon_environment import BioExperimentEnvironment
 from training.evaluation import EvaluationSuite
 from training.trajectory import Trajectory, TrajectoryDataset
-from training.gym_wrapper import BioExperimentGymEnv
 
 
 HEURISTIC_SEQUENCE = [
@@ -26,11 +26,6 @@ HEURISTIC_SEQUENCE = [
     ActionType.MARKER_SELECTION,
     ActionType.SYNTHESIZE_CONCLUSION,
 ]
-
-
-def action_space_index(action_type: ActionType) -> int:
-    return list(ActionType).index(action_type)
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -76,14 +71,67 @@ def pick_action(policy: str, step_index: int, history: Sequence[ActionType]) -> 
     return heuristic_next_action(history, step_index)
 
 
+def default_comparison_name(conditions: Sequence[str]) -> str:
+    normalized = {condition.lower() for condition in conditions}
+    if {"healthy", "ipf"} <= normalized:
+        return "IPF_vs_healthy"
+    if any("treated" in condition for condition in normalized) and any(
+        "untreated" in condition for condition in normalized
+    ):
+        return "treated_vs_untreated"
+    if any("healthy" in condition for condition in normalized):
+        return "disease_vs_healthy"
+    return "disease_vs_healthy"
+
+
+def build_experiment_action(
+    action_type: ActionType,
+    discovered_markers: Sequence[str],
+    conditions: Sequence[str],
+) -> ExperimentAction:
+    method = None
+    parameters: Dict[str, object] = {}
+
+    if action_type == ActionType.COLLECT_SAMPLE:
+        parameters = {"n_samples": 6}
+    elif action_type == ActionType.PREPARE_LIBRARY:
+        method = "10x_chromium"
+    elif action_type == ActionType.RUN_QC:
+        method = "scanpy.pp.calculate_qc_metrics"
+    elif action_type == ActionType.FILTER_DATA:
+        method = "scanpy.pp.filter_cells"
+    elif action_type == ActionType.NORMALIZE_DATA:
+        method = "scanpy.pp.normalize_total"
+    elif action_type == ActionType.CLUSTER_CELLS:
+        method = "scanpy.tl.leiden"
+    elif action_type == ActionType.DIFFERENTIAL_EXPRESSION:
+        method = "scanpy.tl.rank_genes_groups"
+        parameters = {"comparison": default_comparison_name(conditions)}
+    elif action_type == ActionType.TRAJECTORY_ANALYSIS:
+        method = "scanpy.tl.dpt"
+    elif action_type == ActionType.MARKER_SELECTION:
+        method = "scanpy.tl.rank_genes_groups"
+    elif action_type == ActionType.VALIDATE_MARKER:
+        method = "qPCR"
+        parameters = {"marker": discovered_markers[0] if discovered_markers else "SPP1"}
+    elif action_type == ActionType.SYNTHESIZE_CONCLUSION:
+        parameters = {"claims": []}
+
+    return ExperimentAction(
+        action_type=action_type,
+        method=method,
+        parameters=parameters,
+        confidence=0.75,
+    )
+
+
 def run_episode(
-    env: BioExperimentGymEnv,
+    env: BioExperimentEnvironment,
     episode_id: str,
     policy: str,
     max_steps: int | None = None,
 ) -> Trajectory:
-    observation, info = env.reset()
-    structured_obs = info["structured_obs"]
+    structured_obs = env.reset()
     traj = Trajectory(
         episode_id=episode_id,
         task=structured_obs.task.model_dump(),
@@ -93,7 +141,7 @@ def run_episode(
         },
     )
 
-    done = False
+    done = structured_obs.done
     step_num = 0
     while not done:
         if max_steps is not None and step_num >= max_steps:
@@ -101,16 +149,15 @@ def run_episode(
 
         history = [rec.action_type for rec in structured_obs.pipeline_history]
         action_type = pick_action(policy, step_num, history)
-        action_idx = action_space_index(action_type)
-        action = {
-            "action_type": action_idx,
-            "confidence": 0.75,
-        }
-        experiment_action = ExperimentAction(action_type=action_type, confidence=0.75)
+        experiment_action = build_experiment_action(
+            action_type=action_type,
+            discovered_markers=structured_obs.discovered_markers,
+            conditions=structured_obs.task.conditions,
+        )
 
-        observation, reward, terminated, truncated, info = env.step(action)
-        structured_obs = info["structured_obs"]
-        done = terminated or truncated
+        structured_obs = env.step(experiment_action)
+        reward = structured_obs.reward
+        done = structured_obs.done
         step_num += 1
 
         traj.add_step(
@@ -138,11 +185,11 @@ def main() -> None:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    env = BioExperimentGymEnv()
+    env = BioExperimentEnvironment()
     trajectories: List[Trajectory] = []
 
     print(
-        f"Starting rollout training script: episodes={args.episodes}, policy={args.policy}"
+        f"Starting rollout collection: episodes={args.episodes}, policy={args.policy}"
     )
     for ep in range(args.episodes):
         print(f"Episode {ep + 1}/{args.episodes}")

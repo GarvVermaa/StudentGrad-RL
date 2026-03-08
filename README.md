@@ -247,29 +247,10 @@ with BioExperimentEnv(base_url="http://localhost:8000") as env:
 
 The environment class supports concurrent sessions, but the bundled server is currently configured with `max_concurrent_envs=1` in `server/app.py`.
 
-### 3. Gymnasium wrapper
-
-Use `training/gym_wrapper.py` when you want a classic RL interface:
-
-```python
-from training.gym_wrapper import BioExperimentGymEnv
-
-env = BioExperimentGymEnv()
-obs, info = env.reset()
-obs, reward, terminated, truncated, info = env.step({
-    "action_type": 0,
-    "confidence": 0.7,
-})
-```
-
-This wrapper vectorizes the structured observation into arrays and reduces the action interface to:
-
-- a discrete action type index
-- a scalar confidence value
-
-### 4. Benchmark and scripted agents
+### 3. Benchmark and scripted agents
 
 - `training/literature_benchmark.py` runs paper-aligned action sequences and compares outcomes against curated expected findings
+- `training_script.py` collects rollout trajectories by calling `BioExperimentEnvironment` directly
 - `run_agent.py` runs a local language model planner against the environment
 - `training/trajectory.py` stores trajectories for offline RL, imitation learning, replay, and evaluation
 - `training/evaluation.py` computes online, benchmark, expert-review, and fidelity-oriented metrics
@@ -314,9 +295,9 @@ That makes it suitable for:
 │   └── tasks/                    # Scenario library and task generation
 ├── training/
 │   ├── evaluation.py             # Metrics
-│   ├── gym_wrapper.py            # Gymnasium wrapper
 │   ├── literature_benchmark.py   # Paper-backed benchmark flow
 │   └── trajectory.py             # Trajectory serialization
+├── training_script.py            # Direct rollout collection script
 └── tests/                        # Unit and integration tests
 ```
 

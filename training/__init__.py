@@ -1,9 +1,7 @@
 from .evaluation import EvaluationSuite
-from .gym_wrapper import BioExperimentGymEnv
 from .trajectory import Trajectory, TrajectoryDataset
 
 __all__ = [
-    "BioExperimentGymEnv",
     "EvaluationSuite",
     "PaperBenchmarkResult",
     "Trajectory",

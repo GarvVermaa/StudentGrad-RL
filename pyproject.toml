@@ -21,9 +21,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-train = [
-    "gymnasium>=0.29.0",
-]
 bio = [
     "biopython>=1.84",
     "gseapy>=1.1.3",
@@ -32,7 +29,6 @@ bio = [
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.0.0",
-    "gymnasium>=0.29.0",
 ]
 
 [project.scripts]
