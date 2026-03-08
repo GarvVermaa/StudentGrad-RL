@@ -1436,26 +1436,54 @@ def build_grpo_config(
     args: argparse.Namespace,
     runtime: Dict[str, Any],
 ):
+    import inspect
+
     _guard_invalid_torchao_version()
     _guard_partial_vllm_install()
     from trl import GRPOConfig
 
-    return GRPOConfig(
-        output_dir=args.output_dir,
-        learning_rate=args.learning_rate,
-        per_device_train_batch_size=args.per_device_train_batch_size,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        num_generations=args.num_generations,
-        max_completion_length=args.max_completion_length,
-        max_prompt_length=args.max_prompt_length,
-        num_train_epochs=args.num_train_epochs,
-        logging_steps=args.logging_steps,
-        save_steps=args.save_steps,
-        bf16=runtime["bf16"],
-        fp16=runtime["fp16"],
-        report_to="none",
-        remove_unused_columns=False,
-    )
+    config_kwargs = {
+        "output_dir": args.output_dir,
+        "learning_rate": args.learning_rate,
+        "per_device_train_batch_size": args.per_device_train_batch_size,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "num_generations": args.num_generations,
+        "max_completion_length": args.max_completion_length,
+        "max_prompt_length": args.max_prompt_length,
+        "num_train_epochs": args.num_train_epochs,
+        "logging_steps": args.logging_steps,
+        "save_steps": args.save_steps,
+        "bf16": runtime["bf16"],
+        "fp16": runtime["fp16"],
+        "report_to": "none",
+        "remove_unused_columns": False,
+    }
+    supported_params = set(inspect.signature(GRPOConfig.__init__).parameters)
+
+    # Older TRL builds may expose a single max_length knob instead of
+    # separate prompt/completion limits.
+    if (
+        "max_length" in supported_params
+        and "max_prompt_length" not in supported_params
+        and "max_completion_length" not in supported_params
+    ):
+        config_kwargs["max_length"] = (
+            args.max_prompt_length + args.max_completion_length
+        )
+
+    filtered_kwargs = {
+        key: value
+        for key, value in config_kwargs.items()
+        if key in supported_params
+    }
+    skipped = sorted(set(config_kwargs) - set(filtered_kwargs))
+    if skipped:
+        print(
+            "GRPOConfig compatibility: skipping unsupported fields "
+            f"{', '.join(skipped)}"
+        )
+
+    return GRPOConfig(**filtered_kwargs)
 
 
 def build_grpo_trainer(
