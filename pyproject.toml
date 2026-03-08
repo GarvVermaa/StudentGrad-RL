@@ -32,8 +32,10 @@ dev = [
 ]
 train = [
     "accelerate>=1.13.0",
+    "bitsandbytes>=0.45.0",
     "datasets>=4.6.1",
     "matplotlib>=3.10.8",
+    "peft>=0.15.0",
     "torch>=2.10.0",
     "transformers>=5.3.0",
     "trl>=0.29.0",

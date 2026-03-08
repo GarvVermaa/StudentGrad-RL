@@ -121,6 +121,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Build the prompt dataset and smoke-test the reward function without training.",
     )
+    parser.add_argument(
+        "--push-to-hub",
+        type=str,
+        default=None,
+        help="HuggingFace Hub repo id to push the trained model to (e.g. 'myuser/my-model').",
+    )
     return parser.parse_args()
 
 
@@ -443,12 +449,12 @@ class OpenEnvReward:
         environment_error_penalty: float = ENVIRONMENT_ERROR_PENALTY,
         domain_randomise: bool = False,
     ) -> None:
+        self.__name__ = "openenv_reward"
         self.reward_backend = reward_backend
         self.base_url = base_url
         self.invalid_action_penalty = invalid_action_penalty
         self.environment_error_penalty = environment_error_penalty
         self.domain_randomise = domain_randomise
-        self.__name__ = "openenv_reward"
 
     def __call__(
         self,
@@ -813,7 +819,6 @@ def load_model_artifacts(
     *,
     trust_remote_code: bool,
 ):
-    import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     runtime = resolve_torch_runtime()
@@ -914,6 +919,17 @@ def main() -> None:
     trainer.train()
     trainer.save_model(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
+    if args.push_to_hub:
+        from huggingface_hub import HfApi
+        api = HfApi()
+        print(f"Pushing model to HuggingFace Hub: {args.push_to_hub}")
+        api.upload_folder(
+            folder_path=args.output_dir,
+            repo_id=args.push_to_hub,
+            repo_type="model",
+            create_pr=False,
+        )
+        print(f"Model pushed to https://huggingface.co/{args.push_to_hub}")
     plot_paths = save_training_plots(
         trainer.state.log_history,
         args.output_dir,
