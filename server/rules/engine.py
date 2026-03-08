@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List
 
-from models import ActionType, ExperimentAction
+from models import ActionType, ExperimentAction, TOOL_REGISTRY
 
 from server.simulator.latent_state import FullLatentState
 
@@ -40,6 +40,7 @@ class RuleEngine:
         violations.extend(self._check_resource_constraints(action, state))
         violations.extend(self._check_redundancy(action, state))
         violations.extend(self._check_causal_validity(action, state))
+        violations.extend(self._check_tool_compatibility(action, state))
         return violations
 
     def hard_violations(self, violations: List[RuleViolation]) -> List[str]:
@@ -205,4 +206,43 @@ class RuleEngine:
                     severity=Severity.SOFT,
                     message="Pathway enrichment without DE may yield unreliable results",
                 ))
+        return vs
+
+    # ── tool / modality compatibility ────────────────────────────────────
+
+    def _check_tool_compatibility(
+        self, action: ExperimentAction, s: FullLatentState
+    ) -> List[RuleViolation]:
+        """Warn when the chosen tool is incompatible with the task modality."""
+        vs: List[RuleViolation] = []
+        method = action.method
+        if not method:
+            return vs
+
+        tool_spec = TOOL_REGISTRY.get(method)
+        if tool_spec is None:
+            vs.append(RuleViolation(
+                rule_id="unknown_tool",
+                severity=Severity.SOFT,
+                message=f"Tool '{method}' is not in the registry — results may be unreliable",
+            ))
+            return vs
+
+        # Check modality compatibility (modality lives on the task, which is
+        # stored in the latent state's associated TaskSpec — but the latent
+        # state doesn't carry the TaskSpec directly.  We can still check via
+        # the action's own context or fall back gracefully).
+        task_modality = getattr(s, "task_modality", None)
+        if task_modality and tool_spec.modalities:
+            if task_modality not in tool_spec.modalities:
+                vs.append(RuleViolation(
+                    rule_id="tool_modality_mismatch",
+                    severity=Severity.SOFT,
+                    message=(
+                        f"Tool '{method}' is designed for "
+                        f"{', '.join(tool_spec.modalities)} but task modality "
+                        f"is '{task_modality}'"
+                    ),
+                ))
+
         return vs

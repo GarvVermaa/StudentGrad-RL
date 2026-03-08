@@ -12,7 +12,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from models import TaskSpec
+from models import TaskSpec, tools_for_modality, assays_for_modality
 
 from server.simulator.latent_state import (
     CellPopulation,
@@ -58,6 +58,14 @@ class TaskGenerator:
         if self.domain_randomise:
             self._randomise(rng, task, biology, technical)
 
+        # Filter available tools/assays to those compatible with the modality.
+        compatible_tools = [t.name for t in tools_for_modality(task.modality)]
+        compatible_assays = [a.name for a in assays_for_modality(task.modality)]
+        if compatible_tools:
+            task.available_tools = compatible_tools
+        if compatible_assays:
+            task.available_assays = compatible_assays
+
         latent = FullLatentState(
             biology=biology,
             technical=technical,
@@ -67,6 +75,7 @@ class TaskGenerator:
                 time_limit_days=task.time_limit_days,
             ),
             hidden_failure_conditions=list(scenario.hidden_failure_conditions),
+            task_modality=task.modality,
             rng_seed=seed or 0,
         )
         return task, latent

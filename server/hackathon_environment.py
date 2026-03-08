@@ -28,7 +28,7 @@ from server.rules.engine import RuleEngine
 from server.rewards.reward import RewardBreakdown, RewardComputer
 from server.simulator.latent_state import FullLatentState
 from server.simulator.noise import NoiseModel
-from server.simulator.transition import ACTION_COSTS, TransitionEngine
+from server.simulator.transition import ACTION_COSTS, TransitionEngine, compute_action_cost
 from server.tasks.generator import TaskGenerator
 
 
@@ -116,7 +116,7 @@ class BioExperimentEnvironment(Environment):
             action, prev_state, self._latent, result.output, hard_v, soft_v,
         )
 
-        cost_budget, cost_time = ACTION_COSTS.get(action.action_type, (0, 0))
+        cost_budget, cost_time = compute_action_cost(action)
         self._history.append(PipelineStepRecord(
             step_index=self._state.step_count,
             action_type=action.action_type,

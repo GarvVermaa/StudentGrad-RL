@@ -32,6 +32,7 @@ from models import (
     ExperimentAction,
     IntermediateOutput,
     META_ACTIONS,
+    TOOL_REGISTRY,
     WET_LAB_ACTIONS,
 )
 
@@ -140,6 +141,11 @@ class RewardComputer:
         # novelty: small bonus for non-redundant steps
         if not soft_violations:
             rb.novelty = 0.1
+
+        # tool-modality fit bonus/penalty
+        tool_fit = self._tool_fit_score(action, prev_state)
+        rb.components["tool_fit"] = tool_fit
+        rb.validity += 0.15 * tool_fit
 
         # penalties
         rb.penalty = -0.15 * len(soft_violations)
@@ -269,6 +275,28 @@ class RewardComputer:
             else:
                 score -= 0.3
         return max(0.0, min(1.0, score / max(n, 1)))
+
+    @staticmethod
+    def _tool_fit_score(
+        action: ExperimentAction, s: FullLatentState
+    ) -> float:
+        """Score how well the chosen tool matches the task modality.
+
+        Returns +1.0 for a perfect match, 0.0 if no tool specified,
+        -1.0 for a known tool used on an incompatible modality.
+        """
+        method = action.method
+        if not method:
+            return 0.0
+        tool_spec = TOOL_REGISTRY.get(method)
+        if tool_spec is None:
+            return -0.5  # unknown tool
+        modality = getattr(s, "task_modality", None)
+        if not modality or not tool_spec.modalities:
+            return 0.0
+        if modality in tool_spec.modalities:
+            return 1.0
+        return -1.0
 
     def _overconfidence_penalty(
         self, s: FullLatentState, conclusions: List[ConclusionClaim]

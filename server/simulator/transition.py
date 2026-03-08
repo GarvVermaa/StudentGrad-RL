@@ -15,6 +15,7 @@ from models import (
     ExperimentAction,
     IntermediateOutput,
     OutputType,
+    TOOL_REGISTRY,
 )
 
 from .latent_state import FullLatentState
@@ -22,7 +23,8 @@ from .noise import NoiseModel
 from .output_generator import OutputGenerator
 
 
-ACTION_COSTS: Dict[ActionType, Tuple[float, float]] = {
+# Fallback costs per ActionType when the agent doesn't specify a known tool.
+_BASE_ACTION_COSTS: Dict[ActionType, Tuple[float, float]] = {
     ActionType.COLLECT_SAMPLE:               (5_000,  7.0),
     ActionType.SELECT_COHORT:                (  500,  1.0),
     ActionType.PREPARE_LIBRARY:              (8_000,  3.0),
@@ -45,6 +47,25 @@ ACTION_COSTS: Dict[ActionType, Tuple[float, float]] = {
     ActionType.REQUEST_SUBAGENT_REVIEW:      (    0,  0.25),
     ActionType.SYNTHESIZE_CONCLUSION:        (    0,  0.5),
 }
+
+# Kept as public alias so existing imports (e.g. hackathon_environment) still work.
+ACTION_COSTS = _BASE_ACTION_COSTS
+
+
+def compute_action_cost(action: ExperimentAction) -> Tuple[float, float]:
+    """Return (budget_cost, time_cost_days) for an action.
+
+    If the action specifies a ``method`` that exists in ``TOOL_REGISTRY``,
+    the tool's ``typical_cost_usd`` and ``typical_runtime_hours`` are used
+    (converted to days).  Otherwise we fall back to the per-ActionType base
+    cost table.
+    """
+    tool_spec = TOOL_REGISTRY.get(action.method or "")
+    if tool_spec is not None:
+        budget = tool_spec.typical_cost_usd
+        time_days = tool_spec.typical_runtime_hours / 24.0
+        return (budget, time_days)
+    return _BASE_ACTION_COSTS.get(action.action_type, (0.0, 0.0))
 
 
 @dataclass
@@ -138,9 +159,7 @@ class TransitionEngine:
     def _apply_resource_cost(
         self, s: FullLatentState, action: ExperimentAction
     ) -> None:
-        budget_cost, time_cost = ACTION_COSTS.get(
-            action.action_type, (0.0, 0.0)
-        )
+        budget_cost, time_cost = compute_action_cost(action)
         s.resources.budget_used += budget_cost
         s.resources.time_used_days += time_cost
         if action.action_type in {
