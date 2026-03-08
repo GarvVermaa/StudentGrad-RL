@@ -823,7 +823,11 @@ def main():
         """Read and consume a command file written by the dashboard."""
         try:
             raw = DASHBOARD_CMD_PATH.read_text(encoding="utf-8")
-            DASHBOARD_CMD_PATH.unlink(missing_ok=True)
+            try:
+                DASHBOARD_CMD_PATH.unlink(missing_ok=True)
+            except OSError:
+                # Windows: file may be locked by dashboard; still consumed
+                pass
             return json.loads(raw)
         except (FileNotFoundError, json.JSONDecodeError):
             return None
@@ -1064,7 +1068,10 @@ def main():
                     log(f"      Pathways: {c.predicted_pathways}")
         log("=" * 70)
 
-    DASHBOARD_CMD_PATH.unlink(missing_ok=True)
+    try:
+        DASHBOARD_CMD_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
     run_episode()
 
     while True:
