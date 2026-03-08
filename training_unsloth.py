@@ -228,6 +228,7 @@ def build_grpo_config(
     base._guard_partial_vllm_install()
     from trl import GRPOConfig
 
+    supported_params = set(inspect.signature(GRPOConfig.__init__).parameters)
     config_kwargs = {
         "output_dir": args.output_dir,
         "learning_rate": args.learning_rate,
@@ -235,7 +236,6 @@ def build_grpo_config(
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
         "num_generations": args.num_generations,
         "max_completion_length": args.max_completion_length,
-        "max_prompt_length": None,  # Avoid UnslothGRPOTrainer image_token_id crash for text-only models
         "num_train_epochs": args.num_train_epochs,
         "logging_steps": args.logging_steps,
         "save_steps": args.save_steps,
@@ -244,7 +244,10 @@ def build_grpo_config(
         "report_to": "none",
         "remove_unused_columns": False,
     }
-    supported_params = set(inspect.signature(GRPOConfig.__init__).parameters)
+    # Only add max_prompt_length if this TRL version supports it; UnslothGRPOTrainer can
+    # fail when passing it to parent, so we only pass when explicitly supported.
+    if "max_prompt_length" in supported_params:
+        config_kwargs["max_prompt_length"] = None  # text-only; avoids image_token_id crash
     if (
         "max_length" in supported_params
         and "max_prompt_length" not in supported_params
