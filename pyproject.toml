@@ -41,7 +41,6 @@ train = [
     "torchvision>=0.20.0",  # required by transformers for Qwen3.5 (image_utils)
     "transformers>=5.3.0",  # 5.3+ required for Qwen3.5 (qwen3_5 model type)
     "trl>=0.29.0",  # GRPOTrainer; 0.29+ compatible with transformers 5.3
-    "vllm",
 ]
 
 [project.scripts]

@@ -1344,6 +1344,38 @@ def _guard_invalid_torchao_version() -> None:
         return
 
 
+def _guard_partial_vllm_install() -> None:
+    """Treat partial vLLM installs as unavailable for TRL imports."""
+    import functools
+    import importlib
+
+    try:
+        import trl.import_utils as trl_import_utils
+    except Exception:
+        return
+
+    if getattr(trl_import_utils, "_openenv_vllm_guard_installed", False):
+        return
+
+    def _has_usable_vllm() -> bool:
+        try:
+            importlib.import_module("vllm")
+            importlib.import_module("vllm.distributed.device_communicators.pynccl")
+            importlib.import_module("vllm.distributed.utils")
+        except Exception:
+            return False
+        return True
+
+    @functools.lru_cache
+    def guarded_is_vllm_available(*args: Any, **kwargs: Any) -> bool:
+        return _has_usable_vllm()
+
+    if hasattr(trl_import_utils.is_vllm_available, "cache_clear"):
+        trl_import_utils.is_vllm_available.cache_clear()
+    trl_import_utils.is_vllm_available = guarded_is_vllm_available
+    trl_import_utils._openenv_vllm_guard_installed = True
+
+
 def load_model_artifacts(
     model_id: str,
     *,
@@ -1405,6 +1437,7 @@ def build_grpo_config(
     runtime: Dict[str, Any],
 ):
     _guard_invalid_torchao_version()
+    _guard_partial_vllm_install()
     from trl import GRPOConfig
 
     return GRPOConfig(
@@ -1435,6 +1468,7 @@ def build_grpo_trainer(
     runtime: Dict[str, Any],
 ):
     _guard_invalid_torchao_version()
+    _guard_partial_vllm_install()
     from trl import GRPOTrainer
 
     config = build_grpo_config(args, runtime)
