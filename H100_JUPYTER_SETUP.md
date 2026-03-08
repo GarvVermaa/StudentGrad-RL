@@ -133,7 +133,7 @@ uv run python training_unsloth.py --model-id Qwen/Qwen3.5-4B --output-dir traini
 uv run python run_agent_unsloth.py
 ```
 
-The checked-in `inference.ipynb` notebook now uses `training_unsloth.py` helpers with 4-bit loading and fast inference enabled by default.
+The checked-in `inference.ipynb` notebook uses `training_unsloth.py` helpers with 4-bit loading. vLLM fast inference is disabled to avoid dependency conflicts.
 
 ## Running Training in a Jupyter Notebook
 
@@ -192,6 +192,30 @@ export HF_HUB_DISABLE_SYMLINKS_WARNING=1
 - Reduce `--num-generations` or `--rollout-steps`.
 - Use a smaller model (e.g., `Qwen/Qwen3.5-0.8B`) for experiments.
 - Keep `--disable-4bit` off unless you explicitly need wider weights.
+
+### `ModuleNotFoundError: No module named 'vllm.lora.models'`
+
+Unsloth's `unsloth_zoo` imports vLLM at load time and expects `vllm.lora.models`, which some vLLM versions don't have. Fix by installing a compatible vLLM:
+
+```bash
+pip install "vllm==0.8.2"
+# or
+pip install "vllm==0.7.3"
+```
+
+**Note:** vLLM 0.8.2 pins `torch==2.6.0`, which conflicts with this project's `torch>=2.10.0`. If you hit that conflict:
+
+1. Use a **separate environment** with torch 2.6–2.8 + vllm 0.8.2 + unsloth.
+2. Or use the non-Unsloth path (`training_script.py` / `train.ipynb`) which doesn't depend on vLLM.
+
+### Unsloth import order warning
+
+If you see "Unsloth should be imported before trl, transformers, peft", ensure `training_unsloth` is imported before `training_script` in your notebook:
+
+```python
+from training_unsloth import make_training_args, run_training  # first
+import training_script as base
+```
 
 ## See Also
 

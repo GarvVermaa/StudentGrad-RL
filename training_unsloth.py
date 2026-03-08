@@ -6,6 +6,9 @@ but arranges the Unsloth path in the more typical pattern:
 2. load a quantized model
 3. apply LoRA adapters
 4. train with an explicit OpenEnv reward function
+
+NOTE: Unsloth must be imported before trl, transformers, peft. Import this
+module before training_script.
 """
 
 from __future__ import annotations
@@ -14,6 +17,9 @@ import argparse
 import random
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
+
+# Unsloth must be imported before trl/transformers/peft for optimizations.
+import unsloth  # noqa: F401
 
 import training_script as base
 
@@ -36,11 +42,21 @@ LORA_TARGET_MODULES = [
 def require_unsloth():
     try:
         from unsloth import FastLanguageModel, PatchFastRL
-    except ImportError as exc:  # pragma: no cover - depends on optional extra
-        raise RuntimeError(
-            "Unsloth is not installed. Run `uv sync --extra train` "
-            "to install the H100/quantized training dependencies."
-        ) from exc
+    except ImportError as exc:
+        msg = str(exc)
+        if "vllm.lora" in msg or "vllm" in msg.lower():
+            raise RuntimeError(
+                f"Unsloth failed: {exc}. "
+                "unsloth_zoo expects vllm.lora.models. Install a compatible vllm:\n"
+                "  pip install 'vllm==0.8.2'   # requires torch 2.6\n"
+                "  pip install 'vllm==0.7.3'    # alternative\n"
+                "If torch>=2.10 conflicts, use a separate env with torch 2.6–2.8."
+            ) from exc
+        if "unsloth" in msg.lower():
+            raise RuntimeError(
+                "Unsloth is not installed. Run `uv sync` or `pip install unsloth`."
+            ) from exc
+        raise RuntimeError(f"Failed to import Unsloth: {exc}") from exc
     return FastLanguageModel, PatchFastRL
 
 
