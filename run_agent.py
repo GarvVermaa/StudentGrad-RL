@@ -36,8 +36,8 @@ def _parse_thinking_flag() -> bool:
 
 ENABLE_THINKING = _parse_thinking_flag()
 
-MODEL_ID = "Qwen/Qwen3.5-0.8B"
-MAX_EPISODE_STEPS = int(os.getenv("RUN_AGENT_MAX_EPISODE_STEPS", "12"))
+MODEL_ID = "Qwen/Qwen3.5-2B"
+MAX_EPISODE_STEPS = int(os.getenv("RUN_AGENT_MAX_EPISODE_STEPS", "20"))
 PIPELINE_TASK = "text-generation"
 
 ACTION_TYPES = [a.value for a in ActionType]
@@ -61,6 +61,23 @@ ACTION_TYPE_ALIASES = {
 
 SYSTEM_PROMPT = build_agent_system_prompt()
 
+STANDARD_PIPELINE_ORDER = [
+    ActionType.COLLECT_SAMPLE,
+    ActionType.SELECT_COHORT,
+    ActionType.PREPARE_LIBRARY,
+    ActionType.SEQUENCE_CELLS,
+    ActionType.RUN_QC,
+    ActionType.FILTER_DATA,
+    ActionType.NORMALIZE_DATA,
+    ActionType.INTEGRATE_BATCHES,
+    ActionType.CLUSTER_CELLS,
+    ActionType.DIFFERENTIAL_EXPRESSION,
+    ActionType.PATHWAY_ENRICHMENT,
+    ActionType.MARKER_SELECTION,
+    ActionType.TRAJECTORY_ANALYSIS,
+    ActionType.REGULATORY_NETWORK_INFERENCE,
+    ActionType.SYNTHESIZE_CONCLUSION,
+]
 
 MODEL_RESPONSE_PREVIEW_CHARS = int(
     os.getenv("RUN_AGENT_MODEL_RESPONSE_PREVIEW_CHARS", "240")
@@ -98,6 +115,14 @@ def format_observation(obs: ExperimentObservation) -> str:
                 line += f" ({h.method})"
             line += f": {h.output_summary[:80]}"
             parts.append(line)
+
+        completed = {h.action_type for h in obs.pipeline_history if h.success}
+        if completed:
+            parts.append(f"Completed steps (do NOT repeat): {', '.join(sorted(a.value for a in completed))}")
+        remaining = [a.value for a in STANDARD_PIPELINE_ORDER if a not in completed]
+        if remaining:
+            parts.append(f"Remaining steps (choose one): {', '.join(remaining)}")
+
     if obs.latest_output and obs.latest_output.data:
         parts.append(
             f"Latest data: {compact_preview(obs.latest_output.data, 200)}"
@@ -106,6 +131,11 @@ def format_observation(obs: ExperimentObservation) -> str:
         parts.append(f"VIOLATIONS: {obs.rule_violations}")
     if obs.discovered_markers:
         parts.append(f"Markers found so far: {obs.discovered_markers[:5]}")
+
+    parts.append(
+        'Output ONLY a single JSON object with these exact keys, no comments, no extra text:\n'
+        '{"action_type": "<one of the remaining steps>", "method": null, "parameters": {}, "justification": "<why>", "confidence": 0.8}'
+    )
     return "\n".join(parts)
 
 
@@ -236,6 +266,17 @@ def get_payload_value(payload: Dict[str, Any], *names: str) -> Any:
     return None
 
 
+def normalize_optional_string(value: Any) -> Optional[str]:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    if isinstance(value, (int, float)):
+        return str(value)
+    return compact_preview(value, 80)
+
+
 def normalize_action_type(raw_action_type: Any) -> Optional[str]:
     if not isinstance(raw_action_type, str):
         return None
@@ -278,6 +319,33 @@ def normalize_action_type(raw_action_type: Any) -> Optional[str]:
     return None
 
 
+def should_block_failed_reattempt(
+    history: List[Any], action_type: ActionType
+) -> bool:
+    last_failed_idx = None
+    last_success_idx = None
+
+    for idx, record in enumerate(history):
+        if record.action_type != action_type:
+            continue
+        if record.success:
+            last_success_idx = idx
+        else:
+            last_failed_idx = idx
+
+    if last_failed_idx is None:
+        return False
+
+    # Allow retry after the same action has already succeeded once, or after the
+    # pipeline made progress with a different successful step since the failure.
+    if last_success_idx is not None and last_success_idx > last_failed_idx:
+        return False
+    for record in history[last_failed_idx + 1:]:
+        if record.success and record.action_type != action_type:
+            return False
+    return True
+
+
 def parse_action(text: str) -> Optional[ExperimentAction]:
     d = extract_json_object(text)
     if d is not None:
@@ -302,16 +370,21 @@ def parse_action(text: str) -> Optional[ExperimentAction]:
         )
         if justification is not None and not isinstance(justification, str):
             justification = compact_preview(justification, 200)
+        method = normalize_optional_string(get_payload_value(d, "method"))
 
         return ExperimentAction(
             action_type=ActionType(action_type),
-            method=get_payload_value(d, "method"),
+            method=method,
             parameters=parameters,
             justification=justification,
             confidence=min(1.0, max(0.0, confidence)),
         )
 
-    action_match = re.search(r'"action_type"\s*:\s*"([^"]+)"', text)
+    action_match = re.search(
+        r'["\']action_type["\']\s*:\s*["\']([^"\']+)',
+        text,
+        re.IGNORECASE,
+    )
     if not action_match:
         return None
 
@@ -319,14 +392,18 @@ def parse_action(text: str) -> Optional[ExperimentAction]:
     if action_type is None:
         return None
 
-    method_match = re.search(r'"method"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+    method_match = re.search(
+        r'["\']method["\']\s*:\s*("((?:[^"\\]|\\.)*)"|null|true|false|-?\d+(?:\.\d+)?)',
+        text,
+        re.IGNORECASE,
+    )
     confidence_match = re.search(
-        r'"confidence"\s*:\s*([0-9]*\.?[0-9]+)',
+        r'["\']confidence["\']\s*:\s*([0-9]*\.?[0-9]+)',
         text,
         re.IGNORECASE,
     )
     justification_match = re.search(
-        r'"(?:justif\w*|reasoning|rationale)"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        r'["\'](?:justif\w*|reasoning|rationale)["\']\s*:\s*"((?:[^"\\]|\\.)*)',
         text,
         re.DOTALL | re.IGNORECASE,
     )
@@ -345,68 +422,26 @@ def parse_action(text: str) -> Optional[ExperimentAction]:
         except json.JSONDecodeError:
             justification = justification_match.group(1)
 
+    method = None
+    if method_match:
+        raw_method = method_match.group(1)
+        if raw_method.startswith('"') and raw_method.endswith('"'):
+            try:
+                method = json.loads(raw_method)
+            except json.JSONDecodeError:
+                method = raw_method.strip('"')
+        elif raw_method.lower() not in {"null", "true", "false"}:
+            method = raw_method
+    method = normalize_optional_string(method)
+
     return ExperimentAction(
         action_type=ActionType(action_type),
-        method=method_match.group(1) if method_match else None,
+        method=method,
         parameters={},
         justification=justification,
         confidence=min(1.0, max(0.0, confidence)),
     )
 
-
-FALLBACK_SEQUENCE = [
-    ActionType.COLLECT_SAMPLE,
-    ActionType.PREPARE_LIBRARY,
-    ActionType.SEQUENCE_CELLS,
-    ActionType.RUN_QC,
-    ActionType.FILTER_DATA,
-    ActionType.NORMALIZE_DATA,
-    ActionType.CLUSTER_CELLS,
-    ActionType.DIFFERENTIAL_EXPRESSION,
-    ActionType.PATHWAY_ENRICHMENT,
-    ActionType.MARKER_SELECTION,
-    ActionType.SYNTHESIZE_CONCLUSION,
-]
-
-
-FALLBACK_METHODS = {
-    ActionType.PREPARE_LIBRARY: "10x_chromium",
-    ActionType.SEQUENCE_CELLS: "NovaSeq",
-    ActionType.RUN_QC: "scanpy.pp.calculate_qc_metrics",
-    ActionType.FILTER_DATA: "scanpy.pp.filter_cells",
-    ActionType.NORMALIZE_DATA: "scanpy.pp.normalize_total",
-    ActionType.CLUSTER_CELLS: "scanpy.tl.leiden",
-    ActionType.DIFFERENTIAL_EXPRESSION: "scanpy.tl.rank_genes_groups",
-    ActionType.PATHWAY_ENRICHMENT: "gseapy.prerank",
-    ActionType.MARKER_SELECTION: "scanpy.tl.rank_genes_groups",
-}
-
-
-def fallback_action(obs: ExperimentObservation) -> ExperimentAction:
-    completed = {
-        record.action_type
-        for record in obs.pipeline_history
-        if record.success
-    }
-    next_action = ActionType.SYNTHESIZE_CONCLUSION
-    for candidate in FALLBACK_SEQUENCE:
-        if candidate not in completed:
-            next_action = candidate
-            break
-
-    parameters: Dict[str, Any] = {}
-    if next_action == ActionType.DIFFERENTIAL_EXPRESSION and len(obs.task.conditions) >= 2:
-        parameters["comparison"] = (
-            f"{obs.task.conditions[1]}_vs_{obs.task.conditions[0]}"
-        )
-
-    return ExperimentAction(
-        action_type=next_action,
-        method=FALLBACK_METHODS.get(next_action),
-        parameters=parameters,
-        justification="fallback",
-        confidence=0.3,
-    )
 
 
 def write_dashboard_state(
@@ -417,7 +452,6 @@ def write_dashboard_state(
     cumulative_reward: float,
     model_response: str = "",
     model_thinking: str = "",
-    used_fallback: bool = False,
     action: Optional[ExperimentAction] = None,
     gen_time: float = 0.0,
     episode_done: bool = False,
@@ -430,7 +464,6 @@ def write_dashboard_state(
         "episode_done": episode_done,
         "cumulative_reward": cumulative_reward,
         "gen_time_s": round(gen_time, 2),
-        "used_fallback": used_fallback,
         "model_response_raw": model_response[:600],
         "model_thinking": model_thinking[:800],
         "thinking_enabled": ENABLE_THINKING,
@@ -755,62 +788,63 @@ def main():
                         thinking = parts[0].replace("<think>", "").strip()
                         response = parts[1].strip()
 
+            is_last_step = (step == MAX_EPISODE_STEPS - 1)
+
             action = parse_action(response)
-            used_fallback = False
             if action is None:
-                log(f"\n  [!] Parse failed, using fallback. Raw: {response[:150]}")
-                action = fallback_action(obs)
-                used_fallback = True
+                if is_last_step:
+                    log(f"\n  [!] Parse failed on final step — forcing synthesize_conclusion.")
+                    action = ExperimentAction(
+                        action_type=ActionType.SYNTHESIZE_CONCLUSION,
+                        justification="forced terminal conclusion",
+                        confidence=0.5,
+                    )
+                else:
+                    log(f"\n  [!] Parse failed, skipping step. Raw: {response[:150]}")
+                    continue
 
-            if not used_fallback:
-                completed_types = {
-                    r.action_type for r in obs.pipeline_history if r.success
-                }
-                failed_types = {
-                    r.action_type
-                    for r in obs.pipeline_history
-                    if not r.success
-                }
-                _META = {
-                    ActionType.DESIGN_FOLLOWUP,
-                    ActionType.REQUEST_SUBAGENT_REVIEW,
-                    ActionType.VALIDATE_MARKER,
-                }
-                analysis_done = bool(
-                    completed_types
-                    & {
-                        ActionType.DIFFERENTIAL_EXPRESSION,
-                        ActionType.PATHWAY_ENRICHMENT,
-                        ActionType.MARKER_SELECTION,
-                    }
+            completed_types = {
+                r.action_type for r in obs.pipeline_history if r.success
+            }
+            failed_types = {
+                r.action_type
+                for r in obs.pipeline_history
+                if not r.success
+            }
+            skip_reason = None
+            if action.action_type in completed_types:
+                skip_reason = (
+                    f"blocked repeat of completed step {action.action_type.value}"
                 )
-                override_reason = None
-                if action.action_type in _META and not analysis_done:
-                    override_reason = (
-                        f"blocked premature meta-action {action.action_type.value}"
+            elif action.action_type in failed_types:
+                if should_block_failed_reattempt(
+                    obs.pipeline_history, action.action_type
+                ):
+                    skip_reason = (
+                        f"blocked re-attempt of failed step {action.action_type.value}"
                     )
-                elif action.action_type in completed_types:
-                    override_reason = (
-                        f"blocked repeat of completed step {action.action_type.value}"
-                    )
-                elif action.action_type in failed_types:
-                    prev_fail_count = sum(
-                        1
-                        for r in obs.pipeline_history
-                        if r.action_type == action.action_type and not r.success
-                    )
-                    if prev_fail_count >= 1:
-                        override_reason = (
-                            f"blocked re-attempt of failed step {action.action_type.value}"
-                        )
 
-                if override_reason:
-                    log(f"\n  [!] {override_reason}, using fallback.")
-                    action = fallback_action(obs)
-                    used_fallback = True
+            if skip_reason:
+                if is_last_step:
+                    log(f"\n  [!] {skip_reason} on final step — forcing synthesize_conclusion.")
+                    action = ExperimentAction(
+                        action_type=ActionType.SYNTHESIZE_CONCLUSION,
+                        justification="forced terminal conclusion",
+                        confidence=0.5,
+                    )
+                else:
+                    log(f"\n  [!] {skip_reason}, skipping step.")
+                    continue
 
-            tag = " [FALLBACK]" if used_fallback else ""
-            log(f"\nStep {step + 1}: {action.action_type.value}{tag}  ({gen_time:.1f}s)")
+            if is_last_step and action.action_type != ActionType.SYNTHESIZE_CONCLUSION:
+                log(f"\n  [!] Final step — overriding {action.action_type.value} with synthesize_conclusion.")
+                action = ExperimentAction(
+                    action_type=ActionType.SYNTHESIZE_CONCLUSION,
+                    justification="forced terminal conclusion",
+                    confidence=action.confidence,
+                )
+
+            log(f"\nStep {step + 1}: {action.action_type.value}  ({gen_time:.1f}s)")
             if thinking:
                 log(f"  Thinking: {thinking[:200]}")
             if action.justification:
@@ -845,7 +879,6 @@ def main():
                 cumulative_reward=cumulative_reward,
                 model_response=response,
                 model_thinking=thinking,
-                used_fallback=used_fallback,
                 action=action,
                 gen_time=gen_time,
                 episode_done=obs.done,
