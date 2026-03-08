@@ -148,7 +148,6 @@ def run_paper_benchmark(
             tool_call_spec=_tool_context(
                 obs.task,
                 libraries=["biopython"],
-                include_expected_findings=True,
             ),
         )
     )
@@ -353,19 +352,7 @@ def infer_conclusion_claims(obs: ExperimentObservation) -> List[ConclusionClaim]
             evidence_steps=_evidence_steps(obs, {OutputType.NETWORK_RESULT}),
         ))
 
-    if claims:
-        return claims
-
-    # Fallback: preserve the strongest expected findings verbatim if the
-    # heuristic extractors do not recover enough signal from the episode.
-    return [
-        ConclusionClaim(
-            claim=finding.finding,
-            confidence=0.65,
-            claim_type=finding.category,
-        )
-        for finding in obs.task.expected_findings[:3]
-    ]
+    return claims
 
 
 def compare_expected_findings(
@@ -444,11 +431,11 @@ def _default_comparison_name(task: TaskSpec) -> str:
 
 
 def _preferred_marker(task: TaskSpec) -> str:
-    for finding in task.expected_findings:
-        for keyword in finding.keywords:
-            if keyword.isupper():
-                return keyword
-    return "SPP1"
+    """Derive a candidate marker from the problem statement, not expected findings."""
+    tokens = [t for t in TOKEN_RE.findall(task.problem_statement) if t.isupper() and len(t) >= 3]
+    if tokens:
+        return tokens[0]
+    return "unknown"
 
 
 def _latest_output_data(

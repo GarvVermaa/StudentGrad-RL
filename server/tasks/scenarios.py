@@ -353,8 +353,8 @@ SCENARIO_LIBRARY: List[Scenario] = [
             budget_limit=90_000.0,
             time_limit_days=150.0,
             prior_observations=[
-                "SPP1 identified as top DE gene in prior pilot study",
-                "SPP1+ macrophages enriched in fibrotic regions",
+                "A macrophage subpopulation shows elevated expression in IPF tissue relative to controls",
+                "Pro-fibrotic macrophage enrichment has been observed in fibrotic regions by spatial profiling",
             ],
             success_criteria=[
                 "Validate SPP1 as a marker for pro-fibrotic macrophages",

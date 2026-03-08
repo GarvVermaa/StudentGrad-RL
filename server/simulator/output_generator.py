@@ -14,6 +14,15 @@ from models import (
 from .latent_state import FullLatentState
 from .noise import NoiseModel
 
+# Pool of common transcription factors used to generate realistic false-positive
+# regulators, so the agent cannot trivially distinguish true vs. false hits by
+# gene-name format alone.
+_NOISE_TFS: List[str] = [
+    "NR3C1", "KLF4", "EGR1", "IRF1", "FOSL2", "JUN", "FOS", "ATF3",
+    "NFKB1", "RELA", "SP1", "MYC", "MAX", "E2F1", "CTCF", "YY1",
+    "TP53", "STAT5A", "SMAD3", "TCF7L2", "NFE2L2", "HIF1A", "CREB1",
+]
+
 
 class OutputGenerator:
     """Creates structured ``IntermediateOutput`` objects conditioned on the
@@ -211,8 +220,11 @@ class OutputGenerator:
         has_stressed_cells = any(
             p.state in _stressed_states for p in s.biology.cell_populations
         )
-        mito_mean = 0.10 if has_stressed_cells else 0.05
-        mito_frac = self.noise.sample_qc_metric(mito_mean, 0.02, 0.0, 0.3)
+        # Means are kept close (0.09 vs 0.06) with a wider SD (0.03) so the
+        # mito fraction is informative but not a near-perfect oracle for
+        # stressed-cell presence.
+        mito_mean = 0.09 if has_stressed_cells else 0.06
+        mito_frac = self.noise.sample_qc_metric(mito_mean, 0.03, 0.0, 0.3)
         ambient_frac = self.noise.sample_qc_metric(
             s.technical.ambient_rna_fraction, 0.01, 0.0, 0.2
         )
@@ -303,7 +315,7 @@ class OutputGenerator:
             output_type=OutputType.CLUSTER_RESULT,
             step_index=idx,
             quality_score=quality,
-            summary=f"Found {n_clusters} clusters (ground-truth populations: {n_true})",
+            summary=f"Found {n_clusters} clusters",
             data={
                 "n_clusters": n_clusters,
                 "cluster_names": cluster_names,
@@ -369,10 +381,16 @@ class OutputGenerator:
         quality = self.noise.quality_degradation(0.7 if has_trajectory else 0.3, [0.9])
         summary_data: Dict[str, Any] = {"method": action.method or "monocle3"}
         if has_trajectory:
+            true_n_lineages = s.biology.true_trajectory.get("n_lineages", 1)
+            true_branching = s.biology.true_trajectory.get("branching", False)
+            # Perturb lineage count by ±1 and flip the branching flag with 20%
+            # probability so the output is informative but not an exact oracle.
+            noisy_n_lineages = max(1, true_n_lineages + int(self.noise.rng.choice([-1, 0, 0, 1])))
+            noisy_branching = true_branching if not self.noise.coin_flip(0.20) else not true_branching
             summary_data.update({
-                "n_lineages": s.biology.true_trajectory.get("n_lineages", 1),
+                "n_lineages": noisy_n_lineages,
                 "pseudotime_range": [0.0, 1.0],
-                "branching_detected": s.biology.true_trajectory.get("branching", False),
+                "branching_detected": noisy_branching,
             })
         else:
             summary_data["n_lineages"] = self.noise.sample_count(1) + 1
@@ -437,6 +455,25 @@ class OutputGenerator:
         true_net = s.biology.true_regulatory_network
         n_edges_true = sum(len(v) for v in true_net.values())
         noise_edges = self.noise.sample_count(max(5, int(n_edges_true * 0.3)))
+
+        true_tfs = list(true_net.keys())
+        # Drop ~25% of true regulators (false-negative rate).
+        fn_set = set(self.noise.generate_false_negatives(true_tfs, 0.25))
+        observed_tfs = [tf for tf in true_tfs if tf not in fn_set]
+        # Inject realistic false-positive TFs drawn from a background pool so
+        # the agent cannot distinguish true from false hits by name format.
+        fp_candidates = [t for t in _NOISE_TFS if t not in set(true_tfs)]
+        n_fp = self.noise.sample_count(max(2, int(len(true_tfs) * 0.5) + 2))
+        if fp_candidates and n_fp > 0:
+            chosen = self.noise.rng.choice(
+                fp_candidates,
+                size=min(n_fp, len(fp_candidates)),
+                replace=False,
+            )
+            observed_tfs.extend(chosen.tolist())
+        # Shuffle so rank order does not reveal true-vs-false identity.
+        observed_tfs = self.noise.shuffle_ranking(observed_tfs, 0.5)
+
         return IntermediateOutput(
             output_type=OutputType.NETWORK_RESULT,
             step_index=idx,
@@ -446,7 +483,7 @@ class OutputGenerator:
                 "method": action.method or "SCENIC",
                 "n_regulons": len(true_net) + self.noise.sample_count(3),
                 "n_edges": n_edges_true + noise_edges,
-                "top_regulators": list(true_net.keys())[:10],
+                "top_regulators": observed_tfs[:10],
             },
             uncertainty=0.35,
             artifacts_available=["regulon_table", "grn_adjacency"],
@@ -491,8 +528,11 @@ class OutputGenerator:
                 "marker": marker,
                 "validated": validated,
                 "assay": action.method or "qPCR",
+                # Means are kept close (0.85 vs 0.45) with a wide SD (0.4)
+                # so the effect size is correlated with, but not a near-perfect
+                # oracle for, true marker membership.
                 "effect_size": self.noise.sample_qc_metric(
-                    1.5 if is_true else 0.2, 0.3, -0.5, 5.0
+                    0.85 if is_true else 0.45, 0.4, -0.5, 5.0
                 ),
             },
             artifacts_available=["validation_data"],

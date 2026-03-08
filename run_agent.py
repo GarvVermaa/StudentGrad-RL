@@ -19,7 +19,16 @@ DASHBOARD_STATE_PATH = Path(__file__).parent / "_dashboard_state.json"
 DASHBOARD_CMD_PATH = Path(__file__).parent / "_dashboard_cmd.json"
 
 USE_PIPELINE = os.getenv("RUN_AGENT_USE_PIPELINE", "0").strip().lower() not in {"0", "false", "off"}
-ENABLE_THINKING = os.getenv("RUN_AGENT_ENABLE_THINKING", "1").strip().lower() not in {"0", "false", "off"}
+
+def _parse_thinking_flag() -> bool:
+    import sys
+    if "--no-thinking" in sys.argv:
+        return False
+    if "--thinking" in sys.argv:
+        return True
+    return os.getenv("RUN_AGENT_ENABLE_THINKING", "1").strip().lower() not in {"0", "false", "off"}
+
+ENABLE_THINKING = _parse_thinking_flag()
 
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 MAX_EPISODE_STEPS = int(os.getenv("RUN_AGENT_MAX_EPISODE_STEPS", "12"))
