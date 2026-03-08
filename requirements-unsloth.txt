@@ -1,0 +1,13 @@
+# Unsloth path: install after uv sync --extra train
+# Unsloth pins trl<=0.24; this project uses trl>=0.29 for training_script.py.
+# Use --no-deps to avoid downgrading trl (Unsloth works with TRL 0.29 in practice).
+#
+# Install:
+#   uv sync --extra train
+#   uv pip install unsloth unsloth_zoo --no-deps
+#
+# Run training with Qwen3-4B-Base:
+#   uv run python training_unsloth.py --model-id Qwen/Qwen3-4B-Base --output-dir training/grpo-unsloth-qwen3-4b
+#
+unsloth>=2025.10.14
+unsloth_zoo

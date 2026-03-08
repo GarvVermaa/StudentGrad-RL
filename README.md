@@ -384,6 +384,23 @@ uv run python training_unsloth.py --dry-run
 uv run python training_unsloth.py --model-id Qwen/Qwen3.5-4B
 ```
 
+**Laptop / mid-range GPU (e.g. 12GB VRAM):** Use reduced batch size and sequence length to avoid OOM:
+
+```bash
+uv sync --extra train
+uv pip install unsloth unsloth_zoo --no-deps   # if using training_unsloth.py
+uv run python training_unsloth.py --model-id Qwen/Qwen3-4B-Base --output-dir training/grpo-unsloth-qwen3-4b --dataset-episodes 12 --rollout-steps 6 --per-device-train-batch-size 1 --num-generations 2 --gradient-accumulation-steps 4 --max-seq-length 1024 --trust-remote-code
+```
+
+If you still hit OOM, try `--max-seq-length 768` or `--num-generations 1`.
+
+**PyTorch CUDA:** Use the PyTorch index that matches your GPU. For older cards (RTX 20/30/40 series): `uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121`. For **RTX 50 series (Blackwell, sm_120)** you need a CUDA 12.8 build:
+
+```bash
+uv pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
+uv pip install triton-windows   # required by Unsloth on Windows
+```
+
 Key arguments:
 
 | Argument | Default | Description |

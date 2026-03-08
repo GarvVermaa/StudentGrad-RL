@@ -41,8 +41,11 @@ cd OpenENV-Hackathon
 The project uses Python 3.12 (see `.python-version`). uv will create a 3.12 venv. For H100 (CUDA 12.x):
 
 ```bash
-# Install everything: core + training (TRL, transformers, torch, unsloth) + Jupyter
+# Install everything: core + training (TRL, transformers, torch) + Jupyter
 UV_TORCH_BACKEND=cu128 uv sync --extra train
+
+# Add Unsloth for training_unsloth.py (skips trl downgrade; Unsloth works with TRL 0.29)
+uv pip install unsloth unsloth_zoo --no-deps
 
 # (ipykernel is included in --extra train)
 ```
@@ -134,8 +137,8 @@ For CUDA 12.6 instead of 12.8, use `cu126` in the index URL and source names.
 On H100, use the quantized Unsloth entrypoints:
 
 ```bash
-uv run python training_unsloth.py --dry-run
-uv run python training_unsloth.py --model-id Qwen/Qwen3.5-4B --output-dir training/grpo-unsloth-output
+uv run python training_unsloth.py --model-id Qwen/Qwen3-4B-Base --output-dir training/grpo-unsloth-qwen3-4b --dry-run
+uv run python training_unsloth.py --model-id Qwen/Qwen3-4B-Base --output-dir training/grpo-unsloth-qwen3-4b
 uv run python run_agent_unsloth.py
 ```
 
@@ -147,7 +150,7 @@ Example cell:
 
 ```python
 # In a notebook with the OpenEnv Bio (Python 3.12) kernel
-!uv run python training_unsloth.py --model-id Qwen/Qwen3.5-4B --dry-run
+!uv run python training_unsloth.py --model-id Qwen/Qwen3-4B-Base --output-dir training/grpo-unsloth-qwen3-4b --dry-run
 ```
 
 Or run interactively from Python:
@@ -156,8 +159,8 @@ Or run interactively from Python:
 import subprocess
 subprocess.run([
     "uv", "run", "python", "training_unsloth.py",
-    "--model-id", "Qwen/Qwen3.5-4B",
-    "--output-dir", "training/grpo-unsloth-output",
+    "--model-id", "Qwen/Qwen3-4B-Base",
+    "--output-dir", "training/grpo-unsloth-qwen3-4b",
 ], check=True)
 ```
 
