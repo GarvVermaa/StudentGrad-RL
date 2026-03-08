@@ -405,7 +405,7 @@ Key arguments:
 
 By default the reward function reconstructs prompt states locally so the prompt and reward stay aligned. Switch to a live server-backed reward loop with `--reward-backend remote --base-url http://localhost:8000`.
 
-`training_unsloth.py` adds H100-oriented options such as `--max-seq-length`, `--disable-4bit`, `--disable-fast-inference`, and LoRA settings (`--lora-r`, `--lora-alpha`, `--lora-dropout`).
+`training_unsloth.py` adds H100-oriented options such as `--max-seq-length`, `--disable-4bit`, and LoRA settings (`--lora-r`, `--lora-alpha`, `--lora-dropout`). vLLM fast inference is disabled to avoid dependency conflicts.
 
 After training, the script saves plots to the output directory:
 

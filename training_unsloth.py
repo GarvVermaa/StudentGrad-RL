@@ -75,11 +75,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Disable 4-bit quantized loading and use the wider base weights.",
     )
     parser.add_argument(
-        "--disable-fast-inference",
-        action="store_true",
-        help="Disable Unsloth fast inference kernels where supported.",
-    )
-    parser.add_argument(
         "--lora-r",
         type=int,
         default=DEFAULT_LORA_R,
@@ -125,7 +120,7 @@ def load_model_artifacts(
     trust_remote_code: bool,
     max_seq_length: int = DEFAULT_MAX_SEQ_LENGTH,
     load_in_4bit: bool = True,
-    fast_inference: bool = True,
+    fast_inference: bool = False,
     prepare_for_inference: bool = False,
 ):
     FastLanguageModel, _ = require_unsloth()
@@ -311,7 +306,7 @@ def run_training(args: argparse.Namespace) -> Dict[str, Any]:
             trust_remote_code=args.trust_remote_code,
             max_seq_length=args.max_seq_length,
             load_in_4bit=not args.disable_4bit,
-            fast_inference=not args.disable_fast_inference,
+            fast_inference=False,
             prepare_for_inference=True,
         )
         device = getattr(model, "device", "unknown")
@@ -352,7 +347,7 @@ def run_training(args: argparse.Namespace) -> Dict[str, Any]:
         trust_remote_code=args.trust_remote_code,
         max_seq_length=args.max_seq_length,
         load_in_4bit=not args.disable_4bit,
-        fast_inference=not args.disable_fast_inference,
+        fast_inference=False,
     )
     # 2. Apply LoRA adapters.
     model = apply_lora_adapters(FastLanguageModel, model, args)

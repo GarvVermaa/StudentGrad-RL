@@ -40,7 +40,7 @@ LOAD_IN_4BIT = (
     not in {"0", "false", "off"}
 )
 FAST_INFERENCE = (
-    os.getenv("RUN_AGENT_UNSLOTH_FAST_INFERENCE", "1").strip().lower()
+    os.getenv("RUN_AGENT_UNSLOTH_FAST_INFERENCE", "0").strip().lower()
     not in {"0", "false", "off"}
 )
 
