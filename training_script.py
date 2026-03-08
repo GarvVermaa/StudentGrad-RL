@@ -789,13 +789,33 @@ def run_dry_run_preview(
     print(sample["prompt"])
 
 
+def resolve_torch_runtime() -> Dict[str, Any]:
+    import torch
+
+    use_cuda = torch.cuda.is_available()
+    bf16 = bool(getattr(torch.cuda, "is_bf16_supported", lambda: False)()) if use_cuda else False
+    dtype = torch.bfloat16 if bf16 else (
+        torch.float16 if use_cuda else torch.float32
+    )
+    return {
+        "use_cuda": use_cuda,
+        "device": "cuda:0" if use_cuda else "cpu",
+        "dtype": dtype,
+        "bf16": bf16,
+        "fp16": use_cuda and not bf16,
+        "device_name": torch.cuda.get_device_name(0) if use_cuda else "cpu",
+    }
+
+
 def load_model_artifacts(
     model_id: str,
     *,
     trust_remote_code: bool,
 ):
+    import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    runtime = resolve_torch_runtime()
     print(f"Loading tokenizer for {model_id} ...")
     tokenizer = AutoTokenizer.from_pretrained(
         model_id,
@@ -808,14 +828,19 @@ def load_model_artifacts(
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         trust_remote_code=trust_remote_code,
-        torch_dtype="auto",
+        dtype=runtime["dtype"],
     )
+    if runtime["use_cuda"]:
+        model = model.to(runtime["device"])
+    if not runtime["use_cuda"]:
+        model = model.to("cpu")
     return tokenizer, model
 
 
 def main() -> None:
     args = parse_args()
     random.seed(args.seed)
+    runtime = resolve_torch_runtime()
 
     if args.load_model_only:
         tokenizer, model = load_model_artifacts(
@@ -826,6 +851,7 @@ def main() -> None:
         print(f"Model ready: {args.model_id}")
         print(f"Tokenizer vocab size: {len(tokenizer)}")
         print(f"Model device: {device}")
+        print(f"Runtime device name: {runtime['device_name']}")
         return
 
     scenario_names = selected_scenarios(args.scenario_name)
@@ -866,8 +892,16 @@ def main() -> None:
         num_train_epochs=args.num_train_epochs,
         logging_steps=args.logging_steps,
         save_steps=args.save_steps,
+        bf16=runtime["bf16"],
+        fp16=runtime["fp16"],
         report_to="none",
         remove_unused_columns=False,
+    )
+
+    print(
+        f"Training runtime: device={runtime['device']} "
+        f"name={runtime['device_name']} "
+        f"dtype={runtime['dtype']}"
     )
 
     trainer = GRPOTrainer(

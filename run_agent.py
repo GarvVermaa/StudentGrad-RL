@@ -285,6 +285,22 @@ def run_with_openai(messages: List[Dict[str, str]]) -> str:
     )
 
 
+def resolve_torch_runtime() -> Dict[str, Any]:
+    assert not USE_OPENAI
+    use_cuda = torch.cuda.is_available()
+    bf16 = bool(getattr(torch.cuda, "is_bf16_supported", lambda: False)()) if use_cuda else False
+    dtype = torch.bfloat16 if bf16 else (
+        torch.float16 if use_cuda else torch.float32
+    )
+    return {
+        "use_cuda": use_cuda,
+        "device": "cuda:0" if use_cuda else "cpu",
+        "dtype": dtype,
+        "device_map": "auto" if use_cuda else None,
+        "device_name": torch.cuda.get_device_name(0) if use_cuda else "cpu",
+    }
+
+
 def main():
     tokenizer = None
     model = None
@@ -293,6 +309,11 @@ def main():
     if USE_OPENAI:
         log(f"Using OpenAI chat model ({OPENAI_MODEL}) with OAuth token auth.")
     else:
+        runtime = resolve_torch_runtime()
+        log(
+            f"Using local model runtime: device={runtime['device']} "
+            f"name={runtime['device_name']} dtype={runtime['dtype']}"
+        )
         if USE_PIPELINE:
             log(f"Loading pipeline ({PIPELINE_TASK}) for {MODEL_ID} ...")
             try:
@@ -300,7 +321,8 @@ def main():
                     PIPELINE_TASK,
                     model=MODEL_ID,
                     trust_remote_code=True,
-                    dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                    dtype=runtime["dtype"],
+                    device=0 if runtime["use_cuda"] else -1,
                 )
                 log("Pipeline loaded.")
             except Exception as exc:
@@ -313,12 +335,10 @@ def main():
             )
             log("Tokenizer loaded. Loading model (this may download files on first run) ...")
 
-            device_map = "auto" if torch.cuda.is_available() else None
-
             model = AutoModelForCausalLM.from_pretrained(
                 MODEL_ID,
-                dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                device_map=device_map,
+                dtype=runtime["dtype"],
+                device_map=runtime["device_map"],
                 trust_remote_code=True,
             )
             log(f"Model loaded. Device: {model.device}")
