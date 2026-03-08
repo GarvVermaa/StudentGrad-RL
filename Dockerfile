@@ -15,26 +15,28 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 # Copy dependency files first for layer caching
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies
+# Install dependencies (including train extras for GRPO training)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-editable
+    uv sync --frozen --no-install-project --no-editable --extra train
 
 # Copy application code
 COPY . .
 
 # Install project
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-editable
+    uv sync --frozen --no-editable --extra train
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app:$PYTHONPATH"
 
-# Northflank uses PORT env var; default to 8000
-ENV PORT=8000
+# Training output directory
+ENV OUTPUT_DIR="/app/training/grpo-output"
 
-EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:${PORT}/health || exit 1
-
-CMD sh -c "uvicorn server.app:app --host 0.0.0.0 --port ${PORT}"
+# Default: run GRPO training. Override CMD for other modes.
+CMD ["python", "training_script.py", \
+     "--model-id", "Qwen/Qwen3.5-0.8B", \
+     "--output-dir", "/app/training/grpo-output", \
+     "--dataset-episodes", "8", \
+     "--rollout-steps", "6", \
+     "--num-generations", "4", \
+     "--trust-remote-code"]
