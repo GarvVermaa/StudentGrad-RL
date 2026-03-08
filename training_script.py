@@ -1266,11 +1266,37 @@ def resolve_torch_runtime() -> Dict[str, Any]:
     }
 
 
+def _guard_invalid_torchao_version() -> None:
+    """Treat malformed torchao installs as unavailable for HF imports."""
+    import importlib.metadata as importlib_metadata
+    from packaging.version import InvalidVersion, Version
+
+    if getattr(importlib_metadata, "_openenv_torchao_guard_installed", False):
+        return
+
+    original_version = importlib_metadata.version
+
+    def guarded_version(distribution_name: str) -> str:
+        version = original_version(distribution_name)
+        if distribution_name.lower() == "torchao":
+            try:
+                Version(version)
+            except InvalidVersion as exc:
+                raise importlib_metadata.PackageNotFoundError(
+                    f"Malformed torchao version metadata: {version!r}"
+                ) from exc
+        return version
+
+    importlib_metadata.version = guarded_version
+    importlib_metadata._openenv_torchao_guard_installed = True
+
+
 def load_model_artifacts(
     model_id: str,
     *,
     trust_remote_code: bool,
 ):
+    _guard_invalid_torchao_version()
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     runtime = resolve_torch_runtime()
@@ -1325,6 +1351,7 @@ def build_grpo_config(
     args: argparse.Namespace,
     runtime: Dict[str, Any],
 ):
+    _guard_invalid_torchao_version()
     from trl import GRPOConfig
 
     return GRPOConfig(
@@ -1354,6 +1381,7 @@ def build_grpo_trainer(
     args: argparse.Namespace,
     runtime: Dict[str, Any],
 ):
+    _guard_invalid_torchao_version()
     from trl import GRPOTrainer
 
     config = build_grpo_config(args, runtime)
