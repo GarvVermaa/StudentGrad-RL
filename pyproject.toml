@@ -40,6 +40,7 @@ train = [
     "transformers>=5.3.0",
     "trl>=0.29.0",
     "unsloth",
+    "vllm==0.8.2",  # Pinned for unsloth/unsloth_zoo compat (vllm.lora.models)
 ]
 
 [project.scripts]

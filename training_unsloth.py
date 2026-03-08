@@ -136,7 +136,7 @@ def load_model_artifacts(
         FastLanguageModel,
         model_name=model_id,
         max_seq_length=max_seq_length,
-        dtype="auto",
+        dtype=runtime["dtype"],
         load_in_4bit=load_in_4bit,
         fast_inference=fast_inference,
         trust_remote_code=trust_remote_code,
