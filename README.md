@@ -249,6 +249,8 @@ An episode ends when one of the following happens:
 
 Dependencies are managed with `uv`. The package requires Python ≥ 3.10.
 
+> **H100 Jupyter notebook setup:** See [H100_JUPYTER_SETUP.md](H100_JUPYTER_SETUP.md) for environment setup on NVIDIA H100 instances with Jupyter.
+
 ```bash
 # Core environment only
 uv sync

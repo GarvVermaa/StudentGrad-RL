@@ -218,7 +218,7 @@ class BioExperimentEnvironment(Environment):
             subagent_outputs=list(self._subagent_outputs),
             conclusions=list(self._conclusions),
             rule_violations=rule_violations or [],
-            step_reward_breakdown={},
+            step_reward_breakdown=reward_breakdown or {},
             done=done,
             reward=reward,
             metadata=meta,

@@ -23,15 +23,6 @@ from server.hackathon_environment import BioExperimentEnvironment
 
 DASHBOARD_STATE_PATH = Path(__file__).parent / "_dashboard_state.json"
 DASHBOARD_CMD_PATH = Path(__file__).parent / "_dashboard_cmd.json"
-# #region agent log
-DEBUG_LOG_PATH = Path(__file__).parent / "debug-904eee.log"
-def _debug_log(msg: str, data: dict):
-    try:
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"sessionId":"904eee","message":msg,"data":data,"timestamp":int(time.time()*1000)}) + "\n")
-    except Exception:
-        pass
-# #endregion
 
 USE_PIPELINE = os.getenv("RUN_AGENT_USE_PIPELINE", "0").strip().lower() not in {"0", "false", "off"}
 
@@ -192,9 +183,6 @@ def _repair_truncated_json(text: str) -> Optional[str]:
             return s
     except json.JSONDecodeError:
         pass
-    # #region agent log
-    _debug_log("repair_failed", {"input_tail": text[-120:], "repaired_tail": s[-120:], "hypothesisId": "H1"})
-    # #endregion
     return None
 
 
@@ -247,25 +235,14 @@ def extract_json_object(text: str) -> Optional[Dict[str, Any]]:
 
     candidates.sort(key=len, reverse=True)
 
-    last_err = None
     for candidate in candidates:
         try:
             parsed = json.loads(candidate)
-        except json.JSONDecodeError as e:
-            last_err = str(e)
+        except json.JSONDecodeError:
             continue
         if isinstance(parsed, dict):
             return parsed
 
-    # #region agent log
-    _debug_log("extract_failed", {
-        "normalized_tail": stripped[-150:] if len(stripped) > 150 else stripped,
-        "repair_returned": repaired is not None,
-        "last_json_err": last_err,
-        "has_python_none": "None" in stripped,
-        "hypothesisId": "H4",
-    })
-    # #endregion
     return None
 
 
@@ -388,11 +365,8 @@ def parse_action(text: str) -> Optional[ExperimentAction]:
     d = extract_json_object(text)
     if d is not None:
         action_type = normalize_action_type(get_payload_value(d, "action_type"))
-        # #region agent log
         if action_type is None:
-            _debug_log("parse_extract_bad_action_type", {"raw": get_payload_value(d, "action_type"), "hypothesisId": "H4"})
             return None
-        # #endregion
 
         parameters = get_payload_value(d, "parameters", "params") or {}
         if not isinstance(parameters, dict):
@@ -426,18 +400,12 @@ def parse_action(text: str) -> Optional[ExperimentAction]:
         text,
         re.IGNORECASE,
     )
-    # #region agent log
     if not action_match:
-        _debug_log("parse_regex_no_action", {"text_preview": text[:200], "hypothesisId": "H3"})
         return None
-    # #endregion
 
     action_type = normalize_action_type(action_match.group(1))
-    # #region agent log
     if action_type is None:
-        _debug_log("parse_regex_bad_action_type", {"raw": action_match.group(1), "hypothesisId": "H3"})
         return None
-    # #endregion
 
     method_match = re.search(
         r'["\']method["\']\s*:\s*("((?:[^"\\]|\\.)*)"|null|none|true|false|-?\d+(?:\.\d+)?)',
@@ -504,6 +472,41 @@ def should_force_terminal_conclusion(
         and ActionType.SYNTHESIZE_CONCLUSION not in completed_types
     )
 
+
+def ensure_conclusion_claims(
+    obs: ExperimentObservation,
+    action: ExperimentAction,
+) -> ExperimentAction:
+    if action.action_type != ActionType.SYNTHESIZE_CONCLUSION:
+        return action
+
+    parameters = dict(action.parameters or {})
+    raw_claims = parameters.get("claims")
+    if isinstance(raw_claims, list) and raw_claims:
+        normalized_claims = [claim for claim in raw_claims if isinstance(claim, dict)]
+        if normalized_claims:
+            parameters["claims"] = normalized_claims
+            if parameters != action.parameters:
+                return action.model_copy(update={"parameters": parameters})
+            return action
+
+    top_markers = list(obs.discovered_markers[:5])
+    causal_mechanisms = list(obs.candidate_mechanisms[:5])
+    claim_type = "causal" if causal_mechanisms else "correlational"
+    conditions = " vs ".join(obs.task.conditions[:2]) if obs.task.conditions else "the task conditions"
+    claim = action.justification or f"Final synthesis for {conditions}."
+
+    parameters["claims"] = [{
+        "top_markers": top_markers,
+        "causal_mechanisms": causal_mechanisms,
+        "predicted_pathways": {},
+        "confidence": action.confidence,
+        "claim_type": claim_type,
+        "claim": claim,
+    }]
+    if not action.justification:
+        action = action.model_copy(update={"justification": claim})
+    return action.model_copy(update={"parameters": parameters})
 
 
 def write_dashboard_state(
@@ -920,6 +923,8 @@ def main():
                     justification="forced terminal conclusion",
                     confidence=action.confidence,
                 )
+
+            action = ensure_conclusion_claims(obs, action)
 
             log(f"\nStep {step + 1}: {action.action_type.value}  ({gen_time:.1f}s)")
             if thinking:

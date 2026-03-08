@@ -214,7 +214,9 @@ class RewardComputer:
             discovered_markers,
             candidate_mechanisms,
         )
-        discovery_error_penalty = -2.5 * (1.0 - discovery_alignment)
+        discovery_error_penalty = -6.0 * (1.0 - discovery_alignment)
+        if discovery_alignment < 0.25:
+            discovery_error_penalty -= 2.0
         rb.components["discovery_alignment"] = discovery_alignment
         rb.components["discovery_error_penalty"] = discovery_error_penalty
 
