@@ -1,255 +1,337 @@
 ---
-title: Hackathon Environment Server
-emoji: 🎶
-colorFrom: purple
-colorTo: gray
+title: Bio Experiment Environment Server
 sdk: docker
 pinned: false
 app_port: 8000
 base_path: /web
 tags:
   - openenv
+  - reinforcement-learning
+  - bioinformatics
 ---
 
-# Hackathon Environment
+# Bio Experiment Environment
 
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
+This repository implements an OpenEnv-compatible reinforcement learning environment for planning biological experiment pipelines. The agent does not directly see the true biological state. Instead, it proposes one structured experiment or analysis step at a time, receives a noisy simulated output, and is rewarded for valid, informative, efficient, well-calibrated plans.
 
-## Quick Start
+The environment is designed as a partially observable Markov decision process (POMDP) with:
 
-The simplest way to use the Hackathon environment is through the `HackathonEnv` class:
+- hidden ground-truth biology
+- hidden technical noise and failure conditions
+- visible task metadata, resource usage, step history, and intermediate outputs
+- dense step-wise reward plus terminal reward for conclusion quality
+
+## What "how it works" means here
+
+At a high level, each episode looks like this:
+
+1. `reset()` picks a biological scenario and seeds the simulator.
+2. The agent receives an `ExperimentObservation` describing the task and current visible state.
+3. The agent submits an `ExperimentAction` such as `collect_sample`, `run_qc`, or `differential_expression`.
+4. The rule engine checks whether the action is valid at this point in the pipeline.
+5. The transition engine updates hidden state, spends resources, and asks the output generator to simulate the result.
+6. The reward computer scores the step for validity, ordering, information gain, efficiency, novelty, and penalties.
+7. The environment returns a new observation with updated history, outputs, discoveries, violations, and reward.
+8. The episode ends when the agent synthesizes a conclusion, exhausts resources, or reaches the step limit.
+
+## The core mental model
+
+### Hidden state
+
+The simulator keeps a `FullLatentState` that the agent never directly sees. It contains:
+
+- true cell populations and marker genes
+- true DE genes, pathways, trajectories, and regulatory networks
+- technical factors such as dropout, doublets, ambient RNA, and batch effects
+- experiment progress flags
+- remaining budget and time
+- hidden failure conditions
+
+### Visible state
+
+The agent only sees `ExperimentObservation`, which includes:
+
+- the current `TaskSpec`
+- pipeline history
+- available assays and tools
+- resource usage
+- the latest and cumulative intermediate outputs
+- discovered markers and candidate mechanisms
+- rule violations
+- per-step reward breakdown
+
+This separation is what makes the environment a POMDP rather than a fully observed simulator.
+
+## Main building blocks
+
+### `models.py`
+
+Defines the contracts that all other modules use:
+
+- `ExperimentAction`: one structured step chosen by the agent
+- `ExperimentObservation`: what the agent can see after each step
+- `TaskSpec`: the problem statement, budget, time limit, assays, tools, and expected findings
+- `IntermediateOutput`: the simulated artifact returned by a step
+- `ConclusionClaim`: structured claims used for final synthesis
+
+The action vocabulary is intentionally broad enough to mix wet-lab, computational, and meta-planning actions.
+
+### `server/tasks/`
+
+This is where episodes come from.
+
+- `scenarios.py` defines a small library of curated biological scenarios
+- `generator.py` turns a scenario into a `(TaskSpec, FullLatentState)` pair
+- optional domain randomization perturbs budget, time, noise, batch effects, cell proportions, and effect sizes
+
+Right now the scenario library includes:
+
+- `cardiac_disease_de`: disease vs healthy differential expression in heart tissue
+- `hematopoiesis_trajectory`: developmental trajectory inference in bone marrow
+- `perturbation_immune`: treatment response under JAK inhibition
+- `biomarker_validation_lung`: follow-up validation of `SPP1` in IPF
+
+### `server/simulator/`
+
+This is the simulator itself.
+
+- `latent_state.py` defines hidden biological, technical, progress, and resource state
+- `noise.py` centralizes stochasticity so episodes are reproducible from a seed
+- `output_generator.py` turns an action plus hidden state into a realistic `IntermediateOutput`
+- `transition.py` applies action costs, updates progress flags, propagates artifacts, and decides whether the episode is done
+
+The output generator does not simply echo the action. It conditions outputs on the hidden state, then injects realistic noise such as dropout, false positives, false negatives, and imperfect clustering.
+
+### `server/rules/engine.py`
+
+The rule engine enforces scientific and procedural constraints before each action is applied.
+
+- hard violations block the action entirely
+- soft violations allow the action, but reduce output quality and add reward penalties
+
+Examples:
+
+- sequencing before library prep is a hard violation
+- running QC twice is a soft redundancy violation
+- making causal claims without enough evidence is a soft validity violation
+
+### `server/rewards/reward.py`
+
+Rewards are decomposed rather than being a single opaque number.
+
+Per-step reward includes:
+
+- validity
+- ordering
+- information gain
+- efficiency
+- novelty
+- penalties
+- potential-based shaping
+
+Terminal reward adds:
+
+- pipeline completeness
+- calibration of conclusions against hidden truth
+- remaining budget and time efficiency
+- overconfidence penalties for strong but incorrect claims
+
+This makes the environment easier to debug, benchmark, and train against.
+
+### `server/hackathon_environment.py`
+
+This is the orchestration layer that ties everything together.
+
+On `reset()` it:
+
+- seeds the noise model
+- generates a task and latent state
+- clears history, outputs, discoveries, conclusions, and cumulative reward
+
+On `step()` it:
+
+- checks rules
+- calls the transition engine
+- computes reward
+- appends a `PipelineStepRecord`
+- updates discovered markers and candidate mechanisms
+- stores conclusion claims if the action is `synthesize_conclusion`
+- builds the next `ExperimentObservation`
+
+This file is the best place to read if you want the end-to-end control flow.
+
+## What actually happens on one step
+
+Here is the concrete order of operations for `env.step(action)`:
+
+1. Increment the step counter.
+2. Copy the previous latent state for reward comparison.
+3. Run rule checks and split violations into hard vs soft.
+4. If there is a hard violation, return a failure report without applying the action.
+5. Otherwise deduct budget and time based on `ACTION_COSTS`.
+6. Update latent progress flags like `samples_collected`, `qc_performed`, or `de_performed`.
+7. Generate a structured simulated output for the chosen action.
+8. If there were soft violations, degrade output quality and attach warnings.
+9. Propagate artifacts back into latent state, such as discovered DE genes or cluster names.
+10. Compute decomposed reward from state transition plus output quality.
+11. If the episode is ending, compute terminal reward from completeness and conclusion calibration.
+12. Return an observation that exposes the visible summary but not the hidden truth.
+
+## Typical successful pipeline
+
+Most scenarios reward a sensible experiment order similar to:
+
+1. `collect_sample`
+2. `prepare_library`
+3. `sequence_cells`
+4. `run_qc`
+5. `filter_data`
+6. `normalize_data`
+7. `cluster_cells`
+8. one or more of:
+   `differential_expression`, `trajectory_analysis`, `pathway_enrichment`,
+   `regulatory_network_inference`, `marker_selection`, `validate_marker`
+9. `synthesize_conclusion`
+
+The exact best sequence depends on the scenario. For example:
+
+- trajectory scenarios benefit from `trajectory_analysis` and regulatory inference
+- biomarker scenarios benefit from DE, marker selection, and validation
+- perturbation scenarios benefit from pathway-level interpretation
+
+## Interfaces you can use
+
+### 1. In-process environment
+
+Use `BioExperimentEnvironment` when you want direct Python access with full structured observations:
 
 ```python
-from hackathon import HackathonAction, HackathonEnv
+from models import ActionType, ExperimentAction
+from server.hackathon_environment import BioExperimentEnvironment
 
-try:
-    # Create environment from Docker image
-    hackathonenv = HackathonEnv.from_docker_image("hackathon-env:latest")
+env = BioExperimentEnvironment(scenario_name="biomarker_validation_lung")
+obs = env.reset()
 
-    # Reset
-    result = hackathonenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
+obs = env.step(ExperimentAction(
+    action_type=ActionType.COLLECT_SAMPLE,
+    parameters={"n_samples": 8},
+    justification="Collect enough material for downstream single-cell analysis.",
+    confidence=0.8,
+))
 
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
-
-    for msg in messages:
-        result = hackathonenv.step(HackathonAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
-
-finally:
-    # Always clean up
-    hackathonenv.close()
+print(obs.task.problem_statement)
+print(obs.latest_output.summary if obs.latest_output else "No output yet")
+print(obs.reward)
 ```
 
-That's it! The `HackathonEnv.from_docker_image()` method handles:
-- Starting the Docker container
-- Waiting for the server to be ready
-- Connecting to the environment
-- Container cleanup when you call `close()`
+### 2. OpenEnv client/server mode
 
-## Building the Docker Image
-
-Before using the environment, you need to build the Docker image:
+Use the FastAPI app when you want to serve the environment over HTTP and WebSocket:
 
 ```bash
-# From project root
-docker build -t hackathon-env:latest -f server/Dockerfile .
+uv sync --extra dev
+uv run uvicorn server.app:app --reload
 ```
 
-## Deploying to Hugging Face Spaces
-
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
-
-```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
-```
-
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
-
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
-
-```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
-```
-
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
-
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
-
-## Environment Details
-
-### Action
-**HackathonAction**: Contains a single field
-- `message` (str) - The message to echo back
-
-### Observation
-**HackathonObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
-
-### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
-
-## Advanced Usage
-
-### Connecting to an Existing Server
-
-If you already have a Hackathon environment server running, you can connect directly:
+Then connect with the client:
 
 ```python
-from hackathon import HackathonEnv
+from client import BioExperimentEnv
+from models import ActionType, ExperimentAction
 
-# Connect to existing server
-hackathonenv = HackathonEnv(base_url="<ENV_HTTP_URL_HERE>")
-
-# Use as normal
-result = hackathonenv.reset()
-result = hackathonenv.step(HackathonAction(message="Hello!"))
-```
-
-Note: When connecting to an existing server, `hackathonenv.close()` will NOT stop the server.
-
-### Using the Context Manager
-
-The client supports context manager usage for automatic connection management:
-
-```python
-from hackathon import HackathonAction, HackathonEnv
-
-# Connect with context manager (auto-connects and closes)
-with HackathonEnv(base_url="http://localhost:8000") as env:
+with BioExperimentEnv(base_url="http://localhost:8000") as env:
     result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(HackathonAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
+    result = env.step(ExperimentAction(action_type=ActionType.COLLECT_SAMPLE))
+    print(result.observation.latest_output.summary)
 ```
 
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
+The environment class supports concurrent sessions, but the bundled server is currently configured with `max_concurrent_envs=1` in `server/app.py`.
 
-### Concurrent WebSocket Sessions
+### 3. Gymnasium wrapper
 
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
+Use `training/gym_wrapper.py` when you want a classic RL interface:
 
 ```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    HackathonEnvironment,  # Pass class, not instance
-    HackathonAction,
-    HackathonObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
+from training.gym_wrapper import BioExperimentGymEnv
+
+env = BioExperimentGymEnv()
+obs, info = env.reset()
+obs, reward, terminated, truncated, info = env.step({
+    "action_type": 0,
+    "confidence": 0.7,
+})
 ```
 
-Then multiple clients can connect simultaneously:
+This wrapper vectorizes the structured observation into arrays and reduces the action interface to:
 
-```python
-from hackathon import HackathonAction, HackathonEnv
-from concurrent.futures import ThreadPoolExecutor
+- a discrete action type index
+- a scalar confidence value
 
-def run_episode(client_id: int):
-    with HackathonEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(HackathonAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
+### 4. Benchmark and scripted agents
 
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
+- `training/literature_benchmark.py` runs paper-aligned action sequences and compares outcomes against curated expected findings
+- `run_agent.py` runs a local language model planner against the environment
+- `training/trajectory.py` stores trajectories for offline RL, imitation learning, replay, and evaluation
+- `training/evaluation.py` computes online, benchmark, expert-review, and fidelity-oriented metrics
+
+## Episode termination
+
+An episode ends when one of the following happens:
+
+- the agent chooses `synthesize_conclusion`
+- resources are exhausted
+- the environment reaches `MAX_STEPS` which is currently `30`
+
+## Why this is useful
+
+This environment is trying to model a realistic scientific planning loop rather than a toy decision problem:
+
+- actions have prerequisites
+- outputs are noisy and imperfect
+- budget and time matter
+- not every correct-looking answer is well supported
+- final conclusions are scored against hidden ground truth
+
+That makes it suitable for:
+
+- agent planning benchmarks
+- RL experiments on long-horizon scientific reasoning
+- literature-grounded evaluation
+- comparing structured policies against LLM-driven planners
+
+## Minimal project map
+
+```text
+.
+├── client.py                     # OpenEnv client
+├── models.py                     # Shared action / observation / task schemas
+├── server/
+│   ├── app.py                    # FastAPI/OpenEnv server
+│   ├── hackathon_environment.py  # Main environment orchestration
+│   ├── rewards/                  # Reward model
+│   ├── rules/                    # Constraint checking
+│   ├── simulator/                # Latent state, noise, outputs, transitions
+│   └── tasks/                    # Scenario library and task generation
+├── training/
+│   ├── evaluation.py             # Metrics
+│   ├── gym_wrapper.py            # Gymnasium wrapper
+│   ├── literature_benchmark.py   # Paper-backed benchmark flow
+│   └── trajectory.py             # Trajectory serialization
+└── tests/                        # Unit and integration tests
 ```
 
-## Development & Testing
+## Quick sanity check
 
-### Direct Environment Testing
-
-Test the environment logic directly without starting the HTTP server:
+The current implementation was sanity-checked with:
 
 ```bash
-# From the server directory
-python3 server/hackathon_environment.py
+uv run pytest tests/test_environment.py tests/test_literature_benchmark.py -q
 ```
 
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
+Those tests verify:
 
-### Running Locally
-
-Run the server locally for development:
-
-```bash
-uvicorn server.app:app --reload
-```
-
-## Project Structure
-
-```
-hackathon/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # HackathonEnv client
-├── models.py              # Action and Observation models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── hackathon_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
-```
+- reset and step lifecycle
+- valid vs invalid pipeline behavior
+- conclusion termination
+- literature-backed scenario selection
+- benchmark matching for curated expected findings

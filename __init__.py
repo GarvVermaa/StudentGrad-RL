@@ -1,16 +1,48 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
-"""Hackathon Environment."""
-
-from .client import HackathonEnv
-from .models import HackathonAction, HackathonObservation
+try:  # pragma: no cover - package import path
+    from .client import BioExperimentEnv
+    from .models import (
+        ActionType,
+        ConclusionClaim,
+        ExpectedFinding,
+        ExperimentAction,
+        ExperimentObservation,
+        IntermediateOutput,
+        OutputType,
+        PaperReference,
+        PipelineStepRecord,
+        ResourceUsage,
+        SubagentType,
+        TaskSpec,
+    )
+except ImportError:  # pragma: no cover - direct module import path
+    from client import BioExperimentEnv
+    from models import (
+        ActionType,
+        ConclusionClaim,
+        ExpectedFinding,
+        ExperimentAction,
+        ExperimentObservation,
+        IntermediateOutput,
+        OutputType,
+        PaperReference,
+        PipelineStepRecord,
+        ResourceUsage,
+        SubagentType,
+        TaskSpec,
+    )
 
 __all__ = [
-    "HackathonAction",
-    "HackathonObservation",
-    "HackathonEnv",
+    "ActionType",
+    "BioExperimentEnv",
+    "ConclusionClaim",
+    "ExpectedFinding",
+    "ExperimentAction",
+    "ExperimentObservation",
+    "IntermediateOutput",
+    "OutputType",
+    "PaperReference",
+    "PipelineStepRecord",
+    "ResourceUsage",
+    "SubagentType",
+    "TaskSpec",
 ]

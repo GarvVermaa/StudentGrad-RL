@@ -1,11 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+from .hackathon_environment import BioExperimentEnvironment
 
-"""Hackathon environment server components."""
-
-from .hackathon_environment import HackathonEnvironment
-
-__all__ = ["HackathonEnvironment"]
+__all__ = ["BioExperimentEnvironment"]

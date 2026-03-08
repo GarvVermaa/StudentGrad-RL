@@ -9,37 +9,58 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "openenv-hackathon"
+name = "openenv-bio-experiment"
 version = "0.1.0"
-description = "Hackathon environment for OpenEnv"
+description = "RL environment for biological experiment pipeline planning"
 requires-python = ">=3.10"
 dependencies = [
-    # Core OpenEnv runtime (provides FastAPI server + HTTP client types)
-    # install from github
-    # "openenv-core[core] @ git+https://github.com/meta-pytorch/OpenEnv.git",
     "openenv-core[core]>=0.2.0",
-    # Environment-specific dependencies
-    # Add all dependencies needed for your environment here
-    # Examples:
-    # "numpy>=1.19.0",
-    # "torch>=2.0.0",
-    # "gymnasium>=0.29.0",
-    # "openspiel>=1.0.0",
-    # "smolagents>=1.22.0,<2",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "pydantic>=2.0.0",
 ]
 
 [project.optional-dependencies]
+train = [
+    "gymnasium>=0.29.0",
+]
+bio = [
+    "biopython>=1.84",
+    "gseapy>=1.1.3",
+    "scanpy>=1.10.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.0.0",
+    "gymnasium>=0.29.0",
 ]
 
 [project.scripts]
-# Server entry point - enables running via: uv run --project . server
-# or: python -m hackathon.server.app
 server = "hackathon.server.app:main"
+
+[tool.uv]
+package = false
 
 [tool.setuptools]
 include-package-data = true
-packages = ["hackathon", "hackathon.server"]
-package-dir = { "hackathon" = ".", "hackathon.server" = "server" }
+packages = [
+    "hackathon",
+    "hackathon.server",
+    "hackathon.server.simulator",
+    "hackathon.server.rules",
+    "hackathon.server.rewards",
+    "hackathon.server.tasks",
+    "hackathon.server.subagents",
+    "hackathon.training",
+    "hackathon.tests",
+]
+[tool.setuptools.package-dir]
+hackathon = "."
+"hackathon.server" = "server"
+"hackathon.server.simulator" = "server/simulator"
+"hackathon.server.rules" = "server/rules"
+"hackathon.server.rewards" = "server/rewards"
+"hackathon.server.tasks" = "server/tasks"
+"hackathon.server.subagents" = "server/subagents"
+"hackathon.training" = "training"
+"hackathon.tests" = "tests"
