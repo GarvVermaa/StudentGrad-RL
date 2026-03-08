@@ -922,6 +922,7 @@ def main() -> None:
     if args.push_to_hub:
         from huggingface_hub import HfApi
         api = HfApi()
+        api.create_repo(repo_id=args.push_to_hub, repo_type="model", exist_ok=True)
         print(f"Pushing model to HuggingFace Hub: {args.push_to_hub}")
         api.upload_folder(
             folder_path=args.output_dir,
