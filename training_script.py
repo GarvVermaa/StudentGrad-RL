@@ -1268,27 +1268,80 @@ def resolve_torch_runtime() -> Dict[str, Any]:
 
 def _guard_invalid_torchao_version() -> None:
     """Treat malformed torchao installs as unavailable for HF imports."""
+    import functools
     import importlib.metadata as importlib_metadata
+    import sys
     from packaging.version import InvalidVersion, Version
 
     if getattr(importlib_metadata, "_openenv_torchao_guard_installed", False):
-        return
+        metadata_guard_installed = True
+    else:
+        original_version = importlib_metadata.version
 
-    original_version = importlib_metadata.version
+        def guarded_version(distribution_name: str) -> str:
+            version = original_version(distribution_name)
+            if distribution_name.lower() == "torchao":
+                try:
+                    Version(version)
+                except InvalidVersion as exc:
+                    raise importlib_metadata.PackageNotFoundError(
+                        f"Malformed torchao version metadata: {version!r}"
+                    ) from exc
+            return version
 
-    def guarded_version(distribution_name: str) -> str:
-        version = original_version(distribution_name)
-        if distribution_name.lower() == "torchao":
+        importlib_metadata.version = guarded_version
+        importlib_metadata._openenv_torchao_guard_installed = True
+        metadata_guard_installed = False
+
+    import_utils = sys.modules.get("transformers.utils.import_utils")
+    if import_utils is not None and not getattr(import_utils, "_openenv_torchao_guard_installed", False):
+        original_is_package_available = import_utils._is_package_available
+
+        def guarded_is_package_available(
+            pkg_name: str,
+            return_version: bool = False,
+        ):
+            if pkg_name != "torchao":
+                return original_is_package_available(pkg_name, return_version=return_version)
+            is_available, package_version = original_is_package_available(
+                pkg_name,
+                return_version=True,
+            )
+            if not is_available:
+                return (False, package_version) if return_version else (False, None)
             try:
-                Version(version)
-            except InvalidVersion as exc:
-                raise importlib_metadata.PackageNotFoundError(
-                    f"Malformed torchao version metadata: {version!r}"
-                ) from exc
-        return version
+                Version(package_version)
+            except InvalidVersion:
+                return (False, "0") if return_version else (False, None)
+            return (True, package_version) if return_version else (True, None)
 
-    importlib_metadata.version = guarded_version
-    importlib_metadata._openenv_torchao_guard_installed = True
+        min_version = getattr(import_utils, "TORCHAO_MIN_VERSION", "0")
+
+        @functools.lru_cache
+        def guarded_is_torchao_available(min_version_override: str = min_version) -> bool:
+            is_available, package_version = guarded_is_package_available(
+                "torchao",
+                return_version=True,
+            )
+            if not is_available:
+                return False
+            try:
+                return Version(package_version) >= Version(min_version_override)
+            except InvalidVersion:
+                return False
+
+        if hasattr(import_utils.is_torchao_available, "cache_clear"):
+            import_utils.is_torchao_available.cache_clear()
+        import_utils._is_package_available = guarded_is_package_available
+        import_utils.is_torchao_available = guarded_is_torchao_available
+        import_utils._openenv_torchao_guard_installed = True
+
+        transformers_utils = sys.modules.get("transformers.utils")
+        if transformers_utils is not None:
+            transformers_utils.is_torchao_available = guarded_is_torchao_available
+
+    if metadata_guard_installed and import_utils is None:
+        return
 
 
 def load_model_artifacts(
