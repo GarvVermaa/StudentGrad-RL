@@ -230,6 +230,16 @@ pip install "vllm==0.7.3"
 1. Use a **separate environment** with torch 2.6–2.8 + vllm 0.8.2 + unsloth.
 2. Or use the non-Unsloth path (`training_script.py` / `train.ipynb`) which doesn't depend on vLLM.
 
+### `ImportError: cannot import name 'ConstantLengthDataset' from 'trl.trainer.utils'`
+
+unsloth_zoo expects TRL &lt;0.20. The project pins `trl>=0.19.0,<0.20`. If you see this error, ensure you've run `uv sync --extra train` so the locked trl version is used. Alternatively, try:
+
+```bash
+pip install --upgrade --force-reinstall --no-cache-dir --no-deps unsloth unsloth_zoo
+```
+
+(A newer unsloth_zoo may fix this and allow TRL 0.20+.)
+
 ### Unsloth import order warning
 
 If you see "Unsloth should be imported before trl, transformers, peft", ensure `training_unsloth` is imported before `training_script` in your notebook:
