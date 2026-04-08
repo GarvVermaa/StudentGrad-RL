@@ -181,25 +181,10 @@ def run_episode(
 
     print(f"[END] success={success} steps={step} score={round(score, 4)}")
 
-
 def main():
-    parser = argparse.ArgumentParser(description="StudentGrad inference runner")
-    parser.add_argument("--model", default="gpt-4o-mini", help="OpenAI model name")
-    parser.add_argument("--scenario", default="hard_full_year", help="Scenario name")
-    parser.add_argument("--max-steps", type=int, default=365, help="Max episode steps")
-    parser.add_argument("--verbose", action="store_true", default=True)
-    args = parser.parse_args()
-
-    if not OPENAI_API_KEY:
-        print("[WARN] OPENAI_API_KEY not set. Set it as an environment variable.", file=sys.stderr)
-
-    run_episode(
-        model=args.model,
-        scenario=args.scenario,
-        max_steps=args.max_steps,
-        verbose=args.verbose,
-    )
-
+    # This can just trigger your inference logic
+    print("Inference engine starting...")
+    # Add a call to your run function here if applicable
 
 if __name__ == "__main__":
     main()
