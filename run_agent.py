@@ -1,4 +1,4 @@
-"""Run the bio-experiment environment with Qwen3.5-0.8B as the planning agent."""
+"""Run the student environment with Qwen3.5-0.8B as the planning agent."""
 
 from __future__ import annotations
 
@@ -20,7 +20,8 @@ from models import (
     build_agent_observation_context,
     build_agent_system_prompt,
 )
-from server.hackathon_environment import BioExperimentEnvironment
+from models import StudentAction, StudentObservation
+from server.student_environment import StudentEnvironment
 
 DASHBOARD_STATE_PATH = Path(__file__).parent / "_dashboard_state.json"
 DASHBOARD_CMD_PATH = Path(__file__).parent / "_dashboard_cmd.json"
@@ -43,41 +44,26 @@ PIPELINE_TASK = "text-generation"
 
 ACTION_TYPES = [a.value for a in ActionType]
 ACTION_TYPE_ALIASES = {
-    "collect_samples": ActionType.COLLECT_SAMPLE.value,
-    "collect_sample_from_bone_marrow": ActionType.COLLECT_SAMPLE.value,
-    "collect_samples_from_bone_marrow": ActionType.COLLECT_SAMPLE.value,
-    "prepare_sc_library": ActionType.PREPARE_LIBRARY.value,
-    "sequence_single_cells": ActionType.SEQUENCE_CELLS.value,
-    "qc": ActionType.RUN_QC.value,
-    "run_quality_control": ActionType.RUN_QC.value,
-    "cluster": ActionType.CLUSTER_CELLS.value,
-    "de_analysis": ActionType.DIFFERENTIAL_EXPRESSION.value,
-    "differential_expression_analysis": ActionType.DIFFERENTIAL_EXPRESSION.value,
-    "trajectory_inference": ActionType.TRAJECTORY_ANALYSIS.value,
-    "infer_trajectory": ActionType.TRAJECTORY_ANALYSIS.value,
-    "network_inference": ActionType.REGULATORY_NETWORK_INFERENCE.value,
-    "select_markers": ActionType.MARKER_SELECTION.value,
-    "final_conclusion": ActionType.SYNTHESIZE_CONCLUSION.value,
+    "study": ActionType.FULL_ACADEMIC.value,
+    "academic": ActionType.FULL_ACADEMIC.value,
+    "skill": ActionType.SKILL_DEEP_DIVE.value,
+    "project": ActionType.PROJECT_SPRINT.value,
+    "balanced": ActionType.BALANCED_LIFE.value,
+    "cram": ActionType.CRAM_MODE.value,
+    "sleep": ActionType.REST.value,
+    "finish": ActionType.SUBMIT_OUTCOME.value,
 }
 
 SYSTEM_PROMPT = build_agent_system_prompt()
 
 STANDARD_PIPELINE_ORDER = [
-    ActionType.COLLECT_SAMPLE,
-    ActionType.SELECT_COHORT,
-    ActionType.PREPARE_LIBRARY,
-    ActionType.SEQUENCE_CELLS,
-    ActionType.RUN_QC,
-    ActionType.FILTER_DATA,
-    ActionType.NORMALIZE_DATA,
-    ActionType.INTEGRATE_BATCHES,
-    ActionType.CLUSTER_CELLS,
-    ActionType.DIFFERENTIAL_EXPRESSION,
-    ActionType.PATHWAY_ENRICHMENT,
-    ActionType.MARKER_SELECTION,
-    ActionType.TRAJECTORY_ANALYSIS,
-    ActionType.REGULATORY_NETWORK_INFERENCE,
-    ActionType.SYNTHESIZE_CONCLUSION,
+    ActionType.FULL_ACADEMIC,
+    ActionType.BALANCED_LIFE,
+    ActionType.SKILL_DEEP_DIVE,
+    ActionType.PROJECT_SPRINT,
+    ActionType.REST,
+    ActionType.CRAM_MODE,
+    ActionType.SUBMIT_OUTCOME,
 ]
 
 MODEL_RESPONSE_PREVIEW_CHARS = int(
@@ -96,12 +82,11 @@ def compact_preview(value: Any, max_chars: int = 160) -> str:
     return text[: max_chars - 3] + "..."
 
 
-def format_observation(obs: ExperimentObservation) -> str:
+def format_observation(obs: StudentObservation) -> str:
     parts = [
         f"TASK: {obs.task.problem_statement}",
-        f"Organism: {obs.task.organism} | Tissue: {obs.task.tissue}",
-        f"Conditions: {', '.join(obs.task.conditions) or 'N/A'}",
-        f"Step: {obs.step_index} | Budget: ${obs.resource_usage.budget_remaining:,.0f} | Time: {obs.resource_usage.time_remaining_days:.0f}d",
+        f"Day: {obs.day} / 365 | Energy: {obs.energy:.1f} | Fatigue: {obs.fatigue:.1f}",
+        f"Subjects: {', '.join(obs.attendance.keys())}",
     ]
     context = build_agent_observation_context(obs, max_tools=5, max_assays=2)
     if context:
@@ -359,8 +344,6 @@ def should_block_failed_reattempt(
     if last_failed_idx is None:
         return False
 
-    # Allow retry after the same action has already succeeded once, or after the
-    # pipeline made progress with a different successful step since the failure.
     if last_success_idx is not None and last_success_idx > last_failed_idx:
         return False
     for record in history[last_failed_idx + 1:]:
@@ -584,18 +567,18 @@ def ensure_conclusion_claims(
 
 
 def write_dashboard_state(
-    env: BioExperimentEnvironment,
-    obs: ExperimentObservation,
+    env: StudentEnvironment,
+    obs: StudentObservation,
     *,
     step: int,
     cumulative_reward: float,
     model_response: str = "",
     model_thinking: str = "",
-    action: Optional[ExperimentAction] = None,
+    action: Optional[StudentAction] = None,
     gen_time: float = 0.0,
     episode_done: bool = False,
 ) -> None:
-    """Serialise the full world state (observable + latent) for the dashboard."""
+    """Serialise student state into bio-shaped JSON for the dashboard UI."""
     latent = env._latent
     snapshot: Dict[str, Any] = {
         "timestamp": time.time(),
@@ -608,117 +591,68 @@ def write_dashboard_state(
         "thinking_enabled": ENABLE_THINKING,
     }
 
+    # Map Student Task to Bio Task slots
     snapshot["task"] = {
         "problem_statement": obs.task.problem_statement,
-        "organism": obs.task.organism,
-        "tissue": obs.task.tissue,
-        "modality": obs.task.modality,
-        "conditions": obs.task.conditions,
-        "budget_limit": obs.task.budget_limit,
-        "time_limit_days": obs.task.time_limit_days,
+        "organism": "Student Agent",          # Dummy for UI
+        "tissue": f"AKTU-CSE ({obs.task.difficulty})",
+        "modality": "365-Day Sim",
+        "conditions": obs.task.target_subjects,
+        "budget_limit": 10.0,                 # Energy Max
+        "time_limit_days": 365.0,
     }
 
+    # Map Resources
     snapshot["resources"] = {
-        "budget_used": round(obs.resource_usage.budget_used, 2),
-        "budget_remaining": round(obs.resource_usage.budget_remaining, 2),
-        "time_used_days": round(obs.resource_usage.time_used_days, 1),
-        "time_remaining_days": round(obs.resource_usage.time_remaining_days, 1),
-        "samples_consumed": obs.resource_usage.samples_consumed,
-        "compute_hours_used": round(obs.resource_usage.compute_hours_used, 2),
+        "budget_used": round(10.0 - obs.energy, 2),  # Energy spent
+        "budget_remaining": round(obs.energy, 2),     # Energy bar
+        "time_used_days": float(obs.day),
+        "time_remaining_days": float(365 - obs.day),
+        "samples_consumed": len(obs.completed_projects),
+        "compute_hours_used": round(obs.fatigue, 1),  # Fatigue mapped to cost
     }
 
+    # History Mapping
     snapshot["pipeline_history"] = [
         {
-            "step_index": h.step_index,
+            "step_index": h.day,
             "action_type": h.action_type.value,
-            "method": h.method,
-            "output_summary": h.output_summary[:120],
-            "success": h.success,
-            "quality_score": round(h.quality_score, 3),
-            "resource_cost": round(h.resource_cost, 2),
-            "time_cost_days": round(h.time_cost_days, 1),
+            "method": h.skill_target.value if h.skill_target else "N/A",
+            "output_summary": h.summary[:120],
+            "success": True,
+            "quality_score": round(h.reward, 3),
+            "resource_cost": h.energy_spent,
+            "time_cost_days": 1,
         }
-        for h in obs.pipeline_history
+        for h in obs.session_history
     ]
+
+    # Map Student-specific findings to Bio UI elements
+    snapshot["discovered_markers"] = obs.completed_projects   # Shows in 'Markers' list
+    snapshot["candidate_mechanisms"] = [
+        f"{k}: {v:.1f}" for k, v in obs.skills.items()
+    ]  # Shows in 'Mechanisms' list
+
+    snapshot["rule_violations"] = obs.rule_violations
+    snapshot["uncertainty_summary"] = {"avg_fatigue": obs.fatigue}
+    snapshot["reward_breakdown"] = obs.step_reward_breakdown
 
     if action:
         snapshot["current_action"] = {
             "action_type": action.action_type.value,
-            "method": action.method,
+            "method": action.skill_target.value if action.skill_target else None,
             "parameters": action.parameters,
             "justification": action.justification,
             "confidence": action.confidence,
         }
 
-    if obs.latest_output:
-        lo = obs.latest_output
-        snapshot["latest_output"] = {
-            "summary": lo.summary,
-            "success": lo.success,
-            "quality_score": round(lo.quality_score, 3),
-            "uncertainty": round(lo.uncertainty, 3),
-            "warnings": lo.warnings,
-            "data_preview": compact_preview(lo.data, 300) if lo.data else None,
-        }
-
-    snapshot["discovered_markers"] = obs.discovered_markers[:20]
-    snapshot["candidate_mechanisms"] = obs.candidate_mechanisms[:20]
-    snapshot["rule_violations"] = obs.rule_violations
-    snapshot["uncertainty_summary"] = {
-        k: round(v, 3) for k, v in obs.uncertainty_summary.items()
-    }
-    snapshot["reward_breakdown"] = {
-        k: round(v, 4) for k, v in obs.step_reward_breakdown.items()
-    }
-
-    if obs.conclusions:
-        snapshot["conclusions"] = [
-            {
-                "claim": c.claim,
-                "claim_type": c.claim_type,
-                "confidence": c.confidence,
-                "top_markers": c.top_markers,
-                "causal_mechanisms": c.causal_mechanisms,
-                "predicted_pathways": c.predicted_pathways,
-            }
-            for c in obs.conclusions
-        ]
-
+    # Hidden Latent State (For Admin Debugging)
     if latent:
-        bio = latent.biology
         snapshot["latent"] = {
-            "cell_populations": [
-                {
-                    "name": cp.name,
-                    "proportion": round(cp.proportion, 3),
-                    "marker_genes": cp.marker_genes[:8],
-                    "state": cp.state,
-                }
-                for cp in bio.cell_populations
-            ],
-            "true_markers": bio.true_markers,
-            "causal_mechanisms": bio.causal_mechanisms,
-            "true_pathways": {
-                k: round(v, 3) for k, v in list(bio.true_pathways.items())[:15]
-            },
-            "true_de_genes_count": sum(
-                len(genes) for genes in bio.true_de_genes.values()
-            ),
-            "true_regulatory_network_size": sum(
-                len(targets) for targets in bio.true_regulatory_network.values()
-            ),
-            "confounders": bio.confounders,
-            "n_true_cells": bio.n_true_cells,
-            "technical": {
-                "ambient_rna_fraction": latent.technical.ambient_rna_fraction,
-                "doublet_rate": latent.technical.doublet_rate,
-                "dropout_rate": latent.technical.dropout_rate,
-                "sample_quality": latent.technical.sample_quality,
-                "library_complexity": latent.technical.library_complexity,
-                "capture_efficiency": latent.technical.capture_efficiency,
-            },
-            "progress": latent.progress.model_dump(),
-            "hidden_failure_conditions": latent.hidden_failure_conditions,
+            "knowledge": latent.knowledge,
+            "attendance": latent.attendance,
+            "stress_level": latent.fatigue_current,
+            "is_sick": latent.last_sick_triggered,
         }
 
     try:
@@ -826,7 +760,6 @@ def main():
             try:
                 DASHBOARD_CMD_PATH.unlink(missing_ok=True)
             except OSError:
-                # Windows: file may be locked by dashboard; still consumed
                 pass
             return json.loads(raw)
         except (FileNotFoundError, json.JSONDecodeError):
@@ -836,25 +769,33 @@ def main():
         scenario_name: Optional[str] = None,
         custom_ground_truth: Optional[Dict[str, Any]] = None,
     ):
-        env = BioExperimentEnvironment(scenario_name=scenario_name)
+        env = StudentEnvironment(scenario_name=scenario_name)
         obs = env.reset()
 
         if custom_ground_truth and env._latent:
             gt = custom_ground_truth
-            bio = env._latent.biology
-            if gt.get("true_markers"):
-                bio.true_markers = gt["true_markers"]
-            if gt.get("causal_mechanisms"):
-                bio.causal_mechanisms = gt["causal_mechanisms"]
-            if gt.get("true_pathways"):
-                bio.true_pathways = {
-                    k: float(v) for k, v in gt["true_pathways"].items()
+            latent = env._latent  # This is a FullLatentState object
+
+            # 1. Map 'target_projects' to completed_projects
+            if gt.get("target_projects"):
+                latent.completed_projects = gt["target_projects"]
+
+            # 2. Map 'subject_difficulty' to latent.true_exam_difficulty
+            if gt.get("subject_difficulty"):
+                latent.latent.true_exam_difficulty = {
+                    k: float(v) for k, v in gt["subject_difficulty"].items()
+                }
+
+            # 3. Map 'initial_knowledge' to true_knowledge
+            if gt.get("initial_knowledge"):
+                latent.true_knowledge = {
+                    k: float(v) for k, v in gt["initial_knowledge"].items()
                 }
 
         log("\n" + "=" * 70)
         log(f"TASK: {obs.task.problem_statement}")
-        log(f"Conditions: {obs.task.conditions}")
-        log(f"Budget: ${obs.task.budget_limit:,.0f} | Time: {obs.task.time_limit_days:.0f} days")
+        log(f"Subjects: {obs.task.target_subjects}")
+        log(f"Energy: {obs.energy:.1f} | Day: {obs.day} / 365")
         if ENABLE_THINKING:
             log("Reasoning mode: ENABLED")
         log("=" * 70)
@@ -1031,7 +972,7 @@ def main():
             step_reward = obs.reward
             cumulative_reward += step_reward
             log(f"  Reward: {step_reward:+.3f}  (cum: {cumulative_reward:+.3f})")
-            log(f"  Budget: ${obs.resource_usage.budget_remaining:,.0f} | Time: {obs.resource_usage.time_remaining_days:.0f}d")
+            log(f"  Energy: {obs.energy:.1f} | Day: {obs.day} / 365")
 
             write_dashboard_state(
                 env, obs,
@@ -1052,20 +993,12 @@ def main():
 
         log(f"\n{'=' * 70}")
         log("EPISODE COMPLETE" if obs.done else f"MAX STEPS ({MAX_EPISODE_STEPS})")
-        log(f"  Steps: {obs.step_index}")
+        log(f"  Steps: {obs.day}")
         log(f"  Total reward: {cumulative_reward:+.3f}")
-        log(f"  Budget used: ${obs.resource_usage.budget_used:,.0f}")
-        log(f"  Time used: {obs.resource_usage.time_used_days:.0f} days")
-        if obs.conclusions:
-            log("  Conclusions:")
-            for c in obs.conclusions:
-                log(f"    [{c.claim_type}, conf={c.confidence:.2f}] {c.claim}")
-                if c.top_markers:
-                    log(f"      Markers: {c.top_markers}")
-                if c.causal_mechanisms:
-                    log(f"      Mechanisms: {c.causal_mechanisms}")
-                if c.predicted_pathways:
-                    log(f"      Pathways: {c.predicted_pathways}")
+        log(f"  Energy remaining: {obs.energy:.1f}")
+        log(f"  Days used: {obs.day} / 365")
+        if obs.completed_projects:
+            log(f"  Completed projects: {obs.completed_projects}")
         log("=" * 70)
 
     try:

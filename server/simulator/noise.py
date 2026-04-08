@@ -87,13 +87,18 @@ class NoiseModel:
 
     # ── quality helpers ─────────────────────────────────────────────────
 
-    def quality_degradation(
-        self, base_quality: float, factors: List[float]
-    ) -> float:
+    def quality_degradation(self, base_quality: float, factors: list[float] = None) -> float:
+    
+        if factors is None:
+        # Default behavior for student calls
+            return float(np.clip(base_quality + self.rng.normal(0, 0.02), 0.0, 1.0))
+    
+    # Original logic for list-based calls
         q = base_quality
         for f in factors:
             q *= f
         return float(np.clip(q + self.rng.normal(0, 0.02), 0.0, 1.0))
+
 
     def sample_qc_metric(
         self, mean: float, std: float, clip_lo: float = 0.0, clip_hi: float = 1.0
