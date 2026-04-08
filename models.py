@@ -114,16 +114,15 @@ class StudentTaskSpec(BaseModel):
 
 # ── Action model ─────────────────────────────────────────────────────────
 
-class StudentAction(Action):
-    """One daily routine chosen by the agent.
+# 1. Update your imports at the top
+from pydantic import BaseModel, Field, field_validator # Add field_validator here
 
-    ``action_type``    — which of the 7 routines to execute.
-    ``skill_target``   — which skill to grind (required for SKILL_DEEP_DIVE).
-    ``project_target`` — which project tier to work on (required for PROJECT_SPRINT).
-    ``parameters``     — any extra hints/settings the agent wants to pass.
-    ``justification``  — LLM chain-of-thought (not used by the env).
-    ``confidence``     — agent's self-reported confidence (0-1).
-    """
+# ... (keep everything else the same until you reach StudentAction) ...
+
+# ── Action model ─────────────────────────────────────────────────────────
+
+class StudentAction(Action):
+    """One daily routine chosen by the agent."""
 
     action_type: ActionType
     skill_target: Optional[SkillType] = None
@@ -132,6 +131,14 @@ class StudentAction(Action):
     justification: Optional[str] = None
     confidence: float = Field(0.5, ge=0.0, le=1.0)
 
+    # ADD THIS VALIDATOR BLOCK HERE:
+    @field_validator("action_type", mode="before")
+    @classmethod
+    def to_lowercase(cls, v: Any) -> Any:
+        """Ensures 'REST' or 'Rest' becomes 'rest' to match the ActionType Enum."""
+        if isinstance(v, str):
+            return v.lower()
+        return v
 
 # ── Observation model ────────────────────────────────────────────────────
 

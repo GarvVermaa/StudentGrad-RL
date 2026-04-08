@@ -1,3 +1,2 @@
-from .hackathon_environment import BioExperimentEnvironment
-
-__all__ = ["BioExperimentEnvironment"]
+from .student_environment import StudentEnvironment
+__all__ = ["StudentEnvironment"]
