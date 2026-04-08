@@ -32,18 +32,11 @@ async def demo_ui():
         status_code=200,
     )
 
-
-def main(host: str = "0.0.0.0", port: int = None):
+def main():
     import uvicorn
-    if port is None:
-        port = int(os.environ.get("PORT", "8000"))
-    uvicorn.run(app, host=host, port=port)
-
+    # Direct port resolution
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=None)
-    args = parser.parse_args()
-    main(host=args.host, port=args.port)
+    main()
