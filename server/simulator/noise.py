@@ -88,12 +88,10 @@ class NoiseModel:
     # ── quality helpers ─────────────────────────────────────────────────
 
     def quality_degradation(self, base_quality: float, factors: list[float] = None) -> float:
-    
+        # Default behavior: single-argument call (student environment uses this)
         if factors is None:
-        # Default behavior for student calls
             return float(np.clip(base_quality + self.rng.normal(0, 0.02), 0.0, 1.0))
-    
-    # Original logic for list-based calls
+        # List-based call: multiply each degradation factor then add noise
         q = base_quality
         for f in factors:
             q *= f
