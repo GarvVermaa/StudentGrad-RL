@@ -1,24 +1,7 @@
-"""Decomposable reward function for the bio-experiment planning POMDP.
+"""StudentGrad reward function.
 
-Reward components
-─────────────────
-  r_validity      — biological validity of the chosen action
-  r_ordering      — correct ordering of experiment steps
-  r_info_gain     — information gain from the step's output
-  r_efficiency    — resource efficiency (budget & time normalised)
-  r_novelty       — bonus for non-redundant, non-trivial actions
-  r_penalty       — penalties for violations, redundancy, waste
-  r_terminal      — terminal quality & calibration against hidden truth
-
-Potential-based shaping
-  φ(s)            — progress potential used for dense shaping signal
-
-The final step reward is:
-  R_t = r_validity + r_ordering + r_info_gain + r_efficiency
-        + r_novelty + r_penalty + [φ(s_{t+1}) − φ(s_t)]
-
-The terminal reward adds:
-  R_T += r_terminal
+Keeps the exact RewardBreakdown dataclass interface from the original repo
+so hackathon_environment.py works without modification.
 """
 
 from __future__ import annotations
@@ -28,18 +11,11 @@ from typing import Dict, List, Optional
 
 from models import (
     ActionType,
-    ConclusionClaim,
-    ExperimentAction,
-    IntermediateOutput,
+    DailyOutput,
     META_ACTIONS,
-    TOOL_REGISTRY,
-    WET_LAB_ACTIONS,
-)
-
-from server.biology.gene_index import (
-    marker_set_score,
-    mechanism_set_score,
-    score_pathways,
+    PROJECT_VALUE,
+    ProjectTier,
+    StudentAction,
 )
 from server.simulator.latent_state import FullLatentState
 
@@ -86,14 +62,6 @@ class RewardBreakdown:
 
 
 class RewardComputer:
-    """Computes step-wise and terminal rewards.
-
-    Parameters
-    ----------
-    efficiency_weight : float
-        Relative importance of resource efficiency.
-    """
-
     def __init__(
         self,
         efficiency_weight: float = 0.3,
@@ -104,20 +72,19 @@ class RewardComputer:
         self.w_ig = info_gain_weight
         self.w_val = validity_weight
 
-    # ── step reward ─────────────────────────────────────────────────────
+    # ── step reward ──────────────────────────────────────────────────────
 
     def step_reward(
         self,
-        action: ExperimentAction,
+        action: StudentAction,
         prev_state: FullLatentState,
         next_state: FullLatentState,
-        output: IntermediateOutput,
+        output: DailyOutput,
         hard_violations: List[str],
         soft_violations: List[str],
     ) -> RewardBreakdown:
         rb = RewardBreakdown()
 
-        # validity
         if hard_violations:
             rb.validity = -1.0
             rb.penalty = -0.5 * len(hard_violations)
@@ -128,394 +95,180 @@ class RewardComputer:
 
         ordering_score = self._ordering_score(action, prev_state)
         rb.ordering = 0.2 * ordering_score
-        if ordering_score < 0:
-            rb.penalty += ordering_score * 0.3
 
-        # information gain proxy: quality × (1 - uncertainty)
         rb.info_gain = self.w_ig * output.quality_score * (1.0 - output.uncertainty)
-        if action.action_type in META_ACTIONS and not (
-            prev_state.progress.de_performed
-            or prev_state.progress.cells_clustered
-        ):
-            # Meta actions before substantive analysis should not dominate reward.
-            rb.info_gain *= 0.2
 
-        # efficiency: normalised cost relative to budget
-        budget_frac = (
-            (next_state.resources.budget_used - prev_state.resources.budget_used)
-            / max(next_state.resources.budget_total, 1)
-        )
-        rb.efficiency = self.w_eff * max(0.0, 1.0 - 5.0 * budget_frac)
+        # Efficiency: days-remaining fraction
+        days_frac = 1.0 / max(next_state.resources.day_total, 1)
+        rb.efficiency = self.w_eff * max(0.0, 1.0 - 5.0 * days_frac)
 
-        # novelty: small bonus for non-redundant steps
+        # Novelty bonus for non-redundant steps
         if not soft_violations:
             rb.novelty = 0.1
 
-        # tool-modality fit bonus/penalty
-        tool_fit = self._tool_fit_score(action, prev_state)
-        rb.components["tool_fit"] = tool_fit
-        rb.validity += 0.15 * tool_fit
+        # Academic safety: positive if any subject above 75%, penalty if any below 40%
+        attendance = next_state.true_attendance
+        above_75 = sum(1 for a in attendance.values() if a >= 0.75)
+        below_40 = sum(1 for a in attendance.values() if a < 0.40)
 
-        # penalties
-        rb.penalty = -0.15 * len(soft_violations)
-        if action.action_type in META_ACTIONS and not (
-            prev_state.progress.de_performed
-            or prev_state.progress.cells_clustered
-        ):
-            rb.penalty -= 0.25
-            rb.components["premature_meta_action_penalty"] = -0.25
+        academic_safety = 0.05 * above_75 - 0.1 * below_40
+        rb.components["academic_safety"] = academic_safety
+        rb.validity += academic_safety
 
-        # potential-based shaping (γ=1 so it doesn't depend on the
-        # training algorithm's discount factor)
+        # Skill shaping: small reward per skill point gained
+        skill_delta = sum(
+            next_state.true_skills.get(k, 0) - prev_state.true_skills.get(k, 0)
+            for k in next_state.true_skills
+        )
+        rb.components["skill_shaping"] = 0.01 * skill_delta
+        rb.info_gain += 0.01 * skill_delta
+
+        # Project milestone bonus
+        prev_projects = len(prev_state.completed_projects)
+        next_projects = len(next_state.completed_projects)
+        if next_projects > prev_projects:
+            # Reward for completing a project
+            new_tier = next_state.completed_projects[-1]
+            proj_reward = PROJECT_VALUE.get(ProjectTier(new_tier), 0.0) * 0.1
+            rb.components["project_milestone"] = proj_reward
+            rb.info_gain += proj_reward
+
+        # Burnout penalty
+        if next_state.resources.fatigue_current >= next_state.latent.true_fatigue_threshold:
+            rb.penalty -= 0.5
+            rb.components["burnout_penalty"] = -0.5
+
+        # Soft violation penalty
+        rb.penalty -= 0.15 * len(soft_violations)
+
+        # Potential-based shaping
         phi_prev = self._potential(prev_state)
         phi_next = self._potential(next_state)
         rb.shaping = phi_next - phi_prev
 
         return rb
 
-    # ── terminal reward ─────────────────────────────────────────────────
+    # ── terminal reward ──────────────────────────────────────────────────
 
     def terminal_reward(
         self,
         state: FullLatentState,
-        conclusions: List[ConclusionClaim],
+        conclusions: list,            # unused in student env — kept for interface compat
         task_success_criteria: List[str],
         discovered_markers: Optional[List[str]] = None,
         candidate_mechanisms: Optional[List[str]] = None,
     ) -> RewardBreakdown:
         rb = RewardBreakdown()
-        discovered_markers = discovered_markers or []
-        candidate_mechanisms = candidate_mechanisms or []
+        p = state.progress
 
-        # pipeline completeness (0-1)
-        completeness = self._completeness(state)
-        rb.components["completeness"] = completeness
+        # Gatekeeper: if academic failed → 0
+        if p.academic_failed or not p.exam_eligible:
+            rb.terminal = -10.0
+            rb.components["academic_failed_penalty"] = -10.0
+            return rb
 
-        # calibration: how well conclusions align with hidden ground truth
-        calibration = self._calibration(state, conclusions)
-        rb.components["calibration"] = calibration
+        # Academic score: average knowledge adjusted by exam difficulty
+        subjects = list(state.true_knowledge.keys())
+        raw_scores = [
+            state.true_knowledge.get(s, 0) / state.latent.true_exam_difficulty.get(s, 1.0)
+            for s in subjects
+        ]
+        academic_score = sum(raw_scores) / max(len(raw_scores), 1)
+        academic_score_norm = min(1.0, academic_score / 100.0)
 
-        # efficiency bonus at terminal
-        budget_eff = state.resources.budget_remaining / max(
-            state.resources.budget_total, 1
+        # Project value
+        project_value = sum(
+            PROJECT_VALUE.get(ProjectTier(t), 0.0)
+            for t in state.completed_projects
         )
-        time_eff = state.resources.time_remaining_days / max(
-            state.resources.time_limit_days, 1
-        )
-        rb.components["budget_efficiency"] = budget_eff
-        rb.components["time_efficiency"] = time_eff
+        # Normalize project value (max possible is basic+fullstack+cloud = 170)
+        project_value_norm = min(1.0, project_value / 170.0)
 
-        # over-confidence penalty
-        overconf = self._overconfidence_penalty(state, conclusions)
-        rb.components["overconfidence_penalty"] = overconf
+        # Attendance bonus
+        avg_attendance = sum(state.true_attendance.values()) / max(len(state.true_attendance), 1)
+        attendance_bonus = 1.0 if avg_attendance >= 0.75 else 0.5
 
-        discovery_alignment = self._discovery_alignment(
-            state,
-            discovered_markers,
-            candidate_mechanisms,
-        )
-        discovery_error_penalty = -6.0 * (1.0 - discovery_alignment)
-        if discovery_alignment < 0.25:
-            discovery_error_penalty -= 2.0
-        rb.components["discovery_alignment"] = discovery_alignment
-        rb.components["discovery_error_penalty"] = discovery_error_penalty
+        # Final formula: 0.3 × academic + 0.7 × project
+        base_score = (0.3 * academic_score_norm + 0.7 * project_value_norm) * attendance_bonus
 
-        conclusion_alignment = self._conclusion_alignment(state, conclusions)
-        conclusion_error_penalty = -4.0 * (1.0 - conclusion_alignment)
-        if conclusions and conclusion_alignment < 0.25:
-            conclusion_error_penalty -= 1.5
-        rb.components["conclusion_alignment"] = conclusion_alignment
-        rb.components["conclusion_error_penalty"] = conclusion_error_penalty
+        rb.components["academic_score_norm"] = academic_score_norm
+        rb.components["project_value_norm"] = project_value_norm
+        rb.components["attendance_bonus"] = attendance_bonus
+        rb.components["base_score"] = base_score
 
-        eff_bonus = (budget_eff + time_eff) / 2.0 if completeness >= 0.3 else 0.0
-        rb.terminal = (
-            3.0 * completeness
-            + 4.0 * calibration
-            + 1.0 * eff_bonus
-            + overconf
-            + discovery_error_penalty
-            + conclusion_error_penalty
-        )
+        # Scale terminal to be dominant signal (≈ 5-10× step rewards)
+        rb.terminal = base_score * 10.0
+
+        # Efficiency bonus: days remaining
+        days_remaining_frac = state.resources.days_remaining / max(state.resources.day_total, 1)
+        eff_bonus = days_remaining_frac * 1.0
+        rb.terminal += eff_bonus
+        rb.components["efficiency_bonus"] = eff_bonus
+
         return rb
 
-    # ── helpers ─────────────────────────────────────────────────────────
+    # ── helpers ──────────────────────────────────────────────────────────
 
     def _ordering_score(
-        self, action: ExperimentAction, s: FullLatentState
+        self, action: StudentAction, s: FullLatentState
     ) -> float:
-        """Heuristic: 1.0 if natural next, 0.3 if acceptable, -1.0 if premature."""
+        """1.0 = ideal next action, 0.3 = acceptable, -1.0 = harmful."""
         at = action.action_type
         p = s.progress
-        NATURAL_NEXT = {
-            ActionType.COLLECT_SAMPLE: not p.samples_collected,
-            ActionType.PREPARE_LIBRARY: p.samples_collected and not p.library_prepared,
-            ActionType.SEQUENCE_CELLS: p.library_prepared and not p.cells_sequenced,
-            ActionType.RUN_QC: p.cells_sequenced and not p.qc_performed,
-            ActionType.FILTER_DATA: p.qc_performed and not p.data_filtered,
-            ActionType.NORMALIZE_DATA: p.data_filtered and not p.data_normalized,
-            ActionType.CLUSTER_CELLS: p.data_normalized and not p.cells_clustered,
-            ActionType.DIFFERENTIAL_EXPRESSION: p.data_normalized and not p.de_performed,
-            ActionType.PATHWAY_ENRICHMENT: p.de_performed and not p.pathways_analyzed,
-            ActionType.MARKER_SELECTION: p.de_performed and not p.markers_discovered,
-            ActionType.VALIDATE_MARKER: p.markers_discovered and not p.markers_validated,
-            ActionType.SYNTHESIZE_CONCLUSION: (
-                p.de_performed or p.cells_clustered
-            ) and not p.conclusion_reached,
-        }
-        if NATURAL_NEXT.get(at, False):
-            return 1.0
+        day = s.resources.day_current
+        exam_day = 300
+        days_to_exam = exam_day - day
 
-        has_evidence = any([
-            p.cells_clustered, p.de_performed, p.trajectories_inferred,
-            p.pathways_analyzed, p.networks_inferred, p.markers_discovered,
-        ])
-        if at in META_ACTIONS and not has_evidence:
-            return -1.0
+        # Early game (days 1-100): prioritise attendance
+        if day <= 100:
+            if at == ActionType.FULL_ACADEMIC:
+                return 1.0
+            if at == ActionType.BALANCED_LIFE:
+                return 0.7
+            if at == ActionType.PROJECT_SPRINT and not p.skill_prereqs_basic_met:
+                return -1.0
+
+        # Mid game (days 101-250): skill acquisition + projects
+        elif day <= 250:
+            if at == ActionType.SKILL_DEEP_DIVE and not p.any_skill_above_10:
+                return 1.0
+            if at == ActionType.PROJECT_SPRINT and p.skill_prereqs_basic_met:
+                return 1.0
+            if at == ActionType.FULL_ACADEMIC and not p.above_75_attendance_all:
+                return 0.8
+
+        # Exam window (days 251-300): study or cram
+        elif day <= exam_day:
+            if at == ActionType.CRAM_MODE:
+                return 1.0
+            if at == ActionType.FULL_ACADEMIC:
+                return 0.8
+            if at == ActionType.PROJECT_SPRINT and not p.above_75_attendance_all:
+                return -1.0
+
+        # Post-exam: submit
+        if day >= exam_day and at == ActionType.SUBMIT_OUTCOME:
+            return 1.0
 
         return 0.3
 
     def _potential(self, s: FullLatentState) -> float:
-        """Progress potential φ(s) — counts completed milestones.
-
-        Returns 0.0 at terminal states so that the shaping signal
-        telescopes correctly over the episode.
-        """
-        if s.progress.conclusion_reached:
-            return 0.0
+        """Progress potential φ(s) — milestones completed."""
         p = s.progress
         milestones = [
-            p.samples_collected,
-            p.library_prepared,
-            p.cells_sequenced,
-            p.qc_performed,
-            p.data_filtered,
-            p.data_normalized,
-            p.cells_clustered,
-            p.de_performed,
-            p.pathways_analyzed,
-            p.markers_discovered,
-            p.markers_validated,
-            p.conclusion_reached,
+            p.attended_first_class,
+            p.above_75_attendance_any,
+            p.above_75_attendance_all,
+            p.first_skill_acquired,
+            p.any_skill_above_10,
+            p.skill_prereqs_basic_met,
+            p.basic_project_done,
+            p.skill_prereqs_fullstack_met,
+            p.fullstack_project_done,
+            p.skill_prereqs_cloud_met,
+            p.cloud_project_done,
+            p.exam_eligible,
+            p.exam_taken,
+            p.passed_all_subjects,
         ]
         return sum(milestones) / len(milestones)
-
-    def _completeness(self, s: FullLatentState) -> float:
-        p = s.progress
-        core = [
-            p.samples_collected,
-            p.cells_sequenced,
-            p.qc_performed,
-            p.data_filtered,
-            p.data_normalized,
-            p.de_performed or p.cells_clustered,
-            p.conclusion_reached,
-        ]
-        return sum(core) / len(core)
-
-    def _calibration(
-        self, s: FullLatentState, conclusions: List[ConclusionClaim]
-    ) -> float:
-        """Structured set-similarity calibration against hidden ground truth.
-
-        Uses pathway-weighted Gaussian similarity for markers, semantic
-        similarity for mechanisms, and activity-weighted matching for pathways.
-        Falls back to legacy substring matching when structured fields are empty.
-        """
-        if not conclusions:
-            return 0.0
-
-        pred_markers = [g for c in conclusions for g in c.top_markers]
-        pred_mechs = [m for c in conclusions for m in c.causal_mechanisms]
-        pred_pathways = {
-            p: v for c in conclusions for p, v in c.predicted_pathways.items()
-        }
-
-        has_structured = bool(pred_markers or pred_mechs or pred_pathways)
-
-        if has_structured:
-            m_score = marker_set_score(pred_markers, s.biology.true_markers)
-            mech_score = mechanism_set_score(
-                pred_mechs, s.biology.causal_mechanisms
-            )
-            pw_score = score_pathways(pred_pathways, s.biology.true_pathways)
-            return 0.50 * m_score + 0.35 * mech_score + 0.15 * pw_score
-
-        return self._legacy_calibration(s, conclusions)
-
-    @staticmethod
-    def _legacy_calibration(
-        s: FullLatentState, conclusions: List[ConclusionClaim]
-    ) -> float:
-        """Substring-based calibration kept for backward compatibility."""
-        true_mechanisms = set(s.biology.causal_mechanisms)
-        true_markers = set(s.biology.true_markers)
-        score = 0.0
-        n = len(conclusions)
-
-        for c in conclusions:
-            claim_lower = c.claim.lower()
-            match = any(m.lower() in claim_lower for m in true_mechanisms)
-            marker_match = any(m.lower() in claim_lower for m in true_markers)
-            if match or marker_match:
-                score += 1.0
-            else:
-                score -= 0.3
-        return max(0.0, min(1.0, score / max(n, 1)))
-
-    _METHOD_TO_TOOL: Dict[str, str] = {
-        "scanpy.pp.calculate_qc_metrics": "Scanpy",
-        "scanpy.pp.filter_cells": "Scanpy",
-        "scanpy.pp.filter_genes": "Scanpy",
-        "scanpy.pp.normalize_total": "Scanpy",
-        "scanpy.pp.log1p": "Scanpy",
-        "scanpy.pp.highly_variable_genes": "Scanpy",
-        "scanpy.pp.neighbors": "Scanpy",
-        "scanpy.tl.leiden": "Leiden",
-        "scanpy.tl.louvain": "Louvain",
-        "scanpy.tl.rank_genes_groups": "Scanpy",
-        "scanpy.tl.paga": "PAGA",
-        "scanpy.tl.umap": "UMAP",
-        "gseapy.prerank": "Scanpy",
-        "gseapy.gsea": "Scanpy",
-        "10x_chromium": "CellRanger",
-        "NovaSeq": "CellRanger",
-    }
-
-    @staticmethod
-    def _tool_fit_score(
-        action: ExperimentAction, s: FullLatentState
-    ) -> float:
-        """Score how well the chosen tool matches the task modality.
-
-        Returns +1.0 for a perfect match, 0.0 if no tool specified,
-        -1.0 for a known tool used on an incompatible modality.
-        """
-        method = action.method
-        if not method:
-            return 0.0
-        resolved = RewardComputer._METHOD_TO_TOOL.get(method, method)
-        tool_spec = TOOL_REGISTRY.get(resolved)
-        if tool_spec is None:
-            return -0.5
-        modality = getattr(s, "task_modality", None)
-        if not modality or not tool_spec.modalities:
-            return 0.0
-        if modality in tool_spec.modalities:
-            return 1.0
-        return -1.0
-
-    def _overconfidence_penalty(
-        self, s: FullLatentState, conclusions: List[ConclusionClaim]
-    ) -> float:
-        """Penalise high-confidence claims that disagree with ground truth.
-
-        Checks structured fields (top_markers, causal_mechanisms) first;
-        falls back to claim substring matching for backward compatibility.
-        """
-        penalty = 0.0
-        true_markers_lower = {m.lower() for m in s.biology.true_markers}
-        true_mechs_lower = {m.lower() for m in s.biology.causal_mechanisms}
-        true_set = true_markers_lower | true_mechs_lower
-
-        for c in conclusions:
-            if c.confidence <= 0.8:
-                continue
-
-            has_structured = bool(c.top_markers or c.causal_mechanisms)
-            if has_structured:
-                marker_hit = any(
-                    g.upper().strip() in {m.upper() for m in s.biology.true_markers}
-                    for g in c.top_markers
-                )
-                mech_hit = any(
-                    any(kw in m.lower() for kw in t.lower().split())
-                    for m in c.causal_mechanisms
-                    for t in s.biology.causal_mechanisms
-                )
-                is_correct = marker_hit or mech_hit
-            else:
-                is_correct = any(t in c.claim.lower() for t in true_set)
-
-            if not is_correct:
-                penalty -= 0.5 * c.confidence
-
-        return penalty
-
-    def _discovery_alignment(
-        self,
-        s: FullLatentState,
-        discovered_markers: List[str],
-        candidate_mechanisms: List[str],
-    ) -> float:
-        """Symmetric end-of-episode similarity for discovered biology.
-
-        Forward scoring measures recall against hidden truth. Reverse scoring
-        measures how well the agent's discoveries map back onto real biology,
-        which penalizes extra hallucinated markers or mechanisms.
-        """
-        components: List[float] = []
-
-        if s.biology.true_markers or discovered_markers:
-            marker_recall = marker_set_score(
-                discovered_markers,
-                s.biology.true_markers,
-            )
-            marker_precision = marker_set_score(
-                s.biology.true_markers,
-                discovered_markers,
-            )
-            components.append((marker_recall + marker_precision) / 2.0)
-
-        if s.biology.causal_mechanisms or candidate_mechanisms:
-            mechanism_recall = mechanism_set_score(
-                candidate_mechanisms,
-                s.biology.causal_mechanisms,
-            )
-            mechanism_precision = mechanism_set_score(
-                s.biology.causal_mechanisms,
-                candidate_mechanisms,
-            )
-            components.append((mechanism_recall + mechanism_precision) / 2.0)
-
-        if not components:
-            return 1.0
-        return sum(components) / len(components)
-
-    def _conclusion_alignment(
-        self,
-        s: FullLatentState,
-        conclusions: List[ConclusionClaim],
-    ) -> float:
-        if not conclusions:
-            return 0.0
-
-        pred_markers = [marker for conclusion in conclusions for marker in conclusion.top_markers]
-        pred_mechanisms = [
-            mechanism
-            for conclusion in conclusions
-            for mechanism in conclusion.causal_mechanisms
-        ]
-
-        if not pred_markers and not pred_mechanisms:
-            return self._legacy_calibration(s, conclusions)
-
-        components: List[float] = []
-        if s.biology.true_markers or pred_markers:
-            marker_recall = marker_set_score(pred_markers, s.biology.true_markers)
-            marker_precision = marker_set_score(s.biology.true_markers, pred_markers)
-            components.append((marker_recall + marker_precision) / 2.0)
-
-        if s.biology.causal_mechanisms or pred_mechanisms:
-            mechanism_recall = mechanism_set_score(
-                pred_mechanisms,
-                s.biology.causal_mechanisms,
-            )
-            mechanism_precision = mechanism_set_score(
-                s.biology.causal_mechanisms,
-                pred_mechanisms,
-            )
-            components.append((mechanism_recall + mechanism_precision) / 2.0)
-
-        if not components:
-            return 1.0
-        return sum(components) / len(components)

@@ -1,21 +1,24 @@
-"""Transition dynamics engine — the heart of the biological simulator.
-
-Orchestrates latent-state updates, output generation, resource accounting,
-and constraint propagation for every agent action.
-"""
+"""Transition dynamics for the StudentGrad environment."""
 
 from __future__ import annotations
 
+import random
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from models import (
     ActionType,
-    ExperimentAction,
-    IntermediateOutput,
-    OutputType,
-    TOOL_REGISTRY,
+    ACTION_ENERGY_COST,
+    ACTION_FATIGUE_DELTA,
+    DailyOutput,
+    PROJECT_PREREQS,
+    PROJECT_VALUE,
+    ProjectTier,
+    SUBJECT_SKILL_SYNERGY,
+    SubjectType,
+    SkillType,
+    StudentAction,
 )
 
 from .latent_state import FullLatentState
@@ -23,57 +26,29 @@ from .noise import NoiseModel
 from .output_generator import OutputGenerator
 
 
-# Fallback costs per ActionType when the agent doesn't specify a known tool.
+# (days_cost, energy_cost) — days is always 1 for student env
 _BASE_ACTION_COSTS: Dict[ActionType, Tuple[float, float]] = {
-    ActionType.COLLECT_SAMPLE:               (5_000,  7.0),
-    ActionType.SELECT_COHORT:                (  500,  1.0),
-    ActionType.PREPARE_LIBRARY:              (8_000,  3.0),
-    ActionType.CULTURE_CELLS:                (3_000, 14.0),
-    ActionType.PERTURB_GENE:                 (2_000,  3.0),
-    ActionType.PERTURB_COMPOUND:             (1_000,  2.0),
-    ActionType.SEQUENCE_CELLS:               (15_000, 5.0),
-    ActionType.RUN_QC:                       (  100,  0.5),
-    ActionType.FILTER_DATA:                  (   50,  0.25),
-    ActionType.NORMALIZE_DATA:               (   50,  0.25),
-    ActionType.INTEGRATE_BATCHES:            (  100,  0.5),
-    ActionType.CLUSTER_CELLS:                (  100,  0.5),
-    ActionType.DIFFERENTIAL_EXPRESSION:      (  100,  0.5),
-    ActionType.TRAJECTORY_ANALYSIS:          (  200,  1.0),
-    ActionType.PATHWAY_ENRICHMENT:           (  100,  0.5),
-    ActionType.REGULATORY_NETWORK_INFERENCE: (  300,  1.0),
-    ActionType.MARKER_SELECTION:             (  100,  0.5),
-    ActionType.VALIDATE_MARKER:              (5_000, 14.0),
-    ActionType.DESIGN_FOLLOWUP:              (  100,  0.5),
-    ActionType.REQUEST_SUBAGENT_REVIEW:      (   50,  0.25),
-    ActionType.SYNTHESIZE_CONCLUSION:        (    0,  0.5),
+    ActionType.FULL_ACADEMIC:   (1, 10.0),
+    ActionType.SKILL_DEEP_DIVE: (1,  8.0),
+    ActionType.PROJECT_SPRINT:  (1,  9.0),
+    ActionType.BALANCED_LIFE:   (1,  7.0),
+    ActionType.CRAM_MODE:       (1, 12.0),
+    ActionType.REST:            (1,  0.0),
+    ActionType.SUBMIT_OUTCOME:  (1,  0.0),
 }
 
-# Kept as public alias so existing imports (e.g. hackathon_environment) still work.
 ACTION_COSTS = _BASE_ACTION_COSTS
 
 
-def compute_action_cost(action: ExperimentAction) -> Tuple[float, float]:
-    """Return (budget_cost, time_cost_days) for an action.
-
-    If the action specifies a ``method`` that exists in ``TOOL_REGISTRY``,
-    the tool's ``typical_cost_usd`` and ``typical_runtime_hours`` are used
-    (converted to days).  Otherwise we fall back to the per-ActionType base
-    cost table.
-    """
-    tool_spec = TOOL_REGISTRY.get(action.method or "")
-    if tool_spec is not None:
-        budget = tool_spec.typical_cost_usd
-        time_days = tool_spec.typical_runtime_hours / 24.0
-        return (budget, time_days)
-    return _BASE_ACTION_COSTS.get(action.action_type, (0.0, 0.0))
+def compute_action_cost(action: StudentAction) -> Tuple[float, float]:
+    """Return (days, energy) cost for an action."""
+    return _BASE_ACTION_COSTS.get(action.action_type, (1, 0.0))
 
 
 @dataclass
 class TransitionResult:
-    """Bundle returned by the transition engine after one step."""
-
     next_state: FullLatentState
-    output: IntermediateOutput
+    output: DailyOutput
     reward_components: Dict[str, float] = field(default_factory=dict)
     hard_violations: List[str] = field(default_factory=list)
     soft_violations: List[str] = field(default_factory=list)
@@ -81,13 +56,6 @@ class TransitionResult:
 
 
 class TransitionEngine:
-    """Applies one action to the latent state, producing the next state
-    and a simulated intermediate output.
-
-    The engine delegates output generation to ``OutputGenerator`` and
-    constraint checking to external rule engines (injected at call time).
-    """
-
     def __init__(self, noise: NoiseModel):
         self.noise = noise
         self.output_gen = OutputGenerator(noise)
@@ -95,47 +63,39 @@ class TransitionEngine:
     def step(
         self,
         state: FullLatentState,
-        action: ExperimentAction,
+        action: StudentAction,
         *,
         hard_violations: Optional[List[str]] = None,
         soft_violations: Optional[List[str]] = None,
     ) -> TransitionResult:
         s = deepcopy(state)
         s.step_count += 1
+        s.resources.day_current += 1
         step_idx = s.step_count
 
         hard_v = hard_violations or []
         soft_v = soft_violations or []
 
         if hard_v:
-            output = IntermediateOutput(
-                output_type=OutputType.FAILURE_REPORT,
-                step_index=step_idx,
+            output = DailyOutput(
                 success=False,
                 summary=f"Action blocked: {'; '.join(hard_v)}",
+                energy_after=s.resources.energy_current,
+                fatigue_after=s.resources.fatigue_current,
             )
             return TransitionResult(
-                next_state=s,
-                output=output,
-                hard_violations=hard_v,
-                soft_violations=soft_v,
+                next_state=s, output=output,
+                hard_violations=hard_v, soft_violations=soft_v,
             )
 
-        self._apply_resource_cost(s, action)
+        # Random events first (sick day, surprise quiz)
+        self._apply_random_events(s)
 
-        if s.resources.budget_exhausted or s.resources.time_exhausted:
-            output = IntermediateOutput(
-                output_type=OutputType.FAILURE_REPORT,
-                step_index=step_idx,
-                success=False,
-                summary="Resources exhausted",
-            )
-            return TransitionResult(
-                next_state=s, output=output, done=True,
-                hard_violations=["resources_exhausted"],
-            )
-
-        self._update_progress(s, action)
+        self._apply_energy_and_fatigue(s, action)
+        self._update_academic_state(s, action)
+        self._update_skill_state(s, action)
+        self._update_project_state(s, action)
+        self._update_progress_flags(s)
 
         output = self.output_gen.generate(action, s, step_idx)
 
@@ -143,9 +103,10 @@ class TransitionEngine:
             output.quality_score *= 0.5
             output.warnings.extend(soft_v)
 
-        self._propagate_artifacts(s, action, output)
-
-        done = action.action_type == ActionType.SYNTHESIZE_CONCLUSION
+        done = (
+            action.action_type == ActionType.SUBMIT_OUTCOME
+            or s.resources.budget_exhausted
+        )
 
         return TransitionResult(
             next_state=s,
@@ -154,112 +115,193 @@ class TransitionEngine:
             done=done,
         )
 
-    # ── internals ───────────────────────────────────────────────────────
+    # ── internals ────────────────────────────────────────────────────────
 
-    def _apply_resource_cost(
-        self, s: FullLatentState, action: ExperimentAction
+    def _apply_random_events(self, s: FullLatentState) -> None:
+        rng = random.Random(s.rng_seed + s.step_count)
+
+        # Sick day
+        if s.progress.sick_days_remaining > 0:
+            s.progress.sick_days_remaining -= 1
+            s.last_sick_triggered = True
+            s.resources.energy_current = s.resources.energy_max * 0.5
+        elif rng.random() < s.context.sick_probability:
+            s.progress.sick_days_remaining = s.context.sick_duration_days - 1
+            s.last_sick_triggered = True
+            s.resources.energy_current = s.resources.energy_max * 0.5
+        else:
+            s.last_sick_triggered = False
+            s.resources.energy_current = s.resources.energy_max  # daily reset
+
+        # Surprise quiz
+        s.last_quiz_triggered = rng.random() < s.context.quiz_probability
+
+    def _apply_energy_and_fatigue(
+        self, s: FullLatentState, action: StudentAction
     ) -> None:
-        budget_cost, time_cost = compute_action_cost(action)
-        s.resources.budget_used += budget_cost
-        s.resources.time_used_days += time_cost
-        if action.action_type in {
-            ActionType.RUN_QC, ActionType.FILTER_DATA,
-            ActionType.NORMALIZE_DATA, ActionType.INTEGRATE_BATCHES,
-            ActionType.CLUSTER_CELLS, ActionType.DIFFERENTIAL_EXPRESSION,
-            ActionType.TRAJECTORY_ANALYSIS, ActionType.PATHWAY_ENRICHMENT,
-            ActionType.REGULATORY_NETWORK_INFERENCE, ActionType.MARKER_SELECTION,
-        }:
-            s.resources.compute_hours_used += time_cost * 8
+        _, energy_cost = compute_action_cost(action)
+        fatigue_delta = ACTION_FATIGUE_DELTA.get(action.action_type, 0.0)
 
-    def _update_progress(
-        self, s: FullLatentState, action: ExperimentAction
-    ) -> None:
-        at = action.action_type
-        p = s.progress
-        _MAP = {
-            ActionType.COLLECT_SAMPLE: "samples_collected",
-            ActionType.SELECT_COHORT: "cohort_selected",
-            ActionType.PREPARE_LIBRARY: "library_prepared",
-            ActionType.CULTURE_CELLS: "cells_cultured",
-            ActionType.PERTURB_GENE: "perturbation_applied",
-            ActionType.PERTURB_COMPOUND: "perturbation_applied",
-            ActionType.SEQUENCE_CELLS: "cells_sequenced",
-            ActionType.RUN_QC: "qc_performed",
-            ActionType.FILTER_DATA: "data_filtered",
-            ActionType.NORMALIZE_DATA: "data_normalized",
-            ActionType.INTEGRATE_BATCHES: "batches_integrated",
-            ActionType.CLUSTER_CELLS: "cells_clustered",
-            ActionType.DIFFERENTIAL_EXPRESSION: "de_performed",
-            ActionType.TRAJECTORY_ANALYSIS: "trajectories_inferred",
-            ActionType.PATHWAY_ENRICHMENT: "pathways_analyzed",
-            ActionType.REGULATORY_NETWORK_INFERENCE: "networks_inferred",
-            ActionType.MARKER_SELECTION: "markers_discovered",
-            ActionType.VALIDATE_MARKER: "markers_validated",
-            ActionType.DESIGN_FOLLOWUP: "followup_designed",
-            ActionType.REQUEST_SUBAGENT_REVIEW: "subagent_review_requested",
-            ActionType.SYNTHESIZE_CONCLUSION: "conclusion_reached",
-        }
-        flag = _MAP.get(at)
-        if flag:
-            setattr(p, flag, True)
+        if s.last_sick_triggered:
+            energy_cost *= 0.5  # sick reduces effectiveness
 
-        if at == ActionType.COLLECT_SAMPLE:
-            n = action.parameters.get("n_samples", 6)
-            s.resources.samples_available += n
+        # Burnout: if fatigue > threshold, clamp energy effectiveness
+        if s.resources.fatigue_current >= s.latent.true_fatigue_threshold:
+            s.progress.burnout_occurred = True
+            energy_cost *= 0.3  # almost nothing gets done
 
-        if at == ActionType.SEQUENCE_CELLS:
-            s.resources.sequencing_lanes_used += 1
-            p.n_cells_sequenced = self.noise.sample_count(
-                s.biology.n_true_cells * s.technical.capture_efficiency
+        # REST recovers fatigue
+        if action.action_type == ActionType.REST:
+            s.resources.fatigue_current = max(
+                0.0,
+                s.resources.fatigue_current + fatigue_delta * s.context.energy_recovery_rate
+            )
+        else:
+            s.resources.fatigue_current = min(
+                100.0,
+                s.resources.fatigue_current + fatigue_delta
             )
 
-        if at in {ActionType.PERTURB_GENE, ActionType.PERTURB_COMPOUND}:
-            self._apply_perturbation_effects(s, action)
-
-        if at == ActionType.FILTER_DATA:
-            retain = self.noise.sample_qc_metric(0.85, 0.05, 0.5, 1.0)
-            base = p.n_cells_sequenced or s.biology.n_true_cells
-            p.n_cells_after_filter = max(100, int(base * retain))
-            s.last_retain_frac = retain
-
-        if at == ActionType.CLUSTER_CELLS:
-            n_true = len(s.biology.cell_populations) or 5
-            p.n_clusters_found = self.noise.sample_cluster_count(n_true, 0.8)
-            s.last_n_clusters = p.n_clusters_found
-
-    def _apply_perturbation_effects(
-        self, s: FullLatentState, action: ExperimentAction
+    def _update_academic_state(
+        self, s: FullLatentState, action: StudentAction
     ) -> None:
-        """Fold perturbation-specific gene effects into true_de_genes so
-        downstream DE analysis reflects the perturbed biology."""
-        target = action.parameters.get("target", "")
-        effects = s.biology.perturbation_effects.get(target, {})
-        if not effects:
+        at = action.action_type
+        subjects = list(s.true_attendance.keys())
+
+        if at in (ActionType.FULL_ACADEMIC, ActionType.CRAM_MODE):
+            attend_delta = 1.0 / s.latent.true_exam_difficulty.get("dsa", 1.0)
+            for subj in subjects:
+                # attendance increases with full academic or cram
+                total_classes_possible = s.resources.day_current
+                current_attended = s.true_attendance[subj] * max(total_classes_possible - 1, 1)
+                new_attended = current_attended + (1.0 if at == ActionType.FULL_ACADEMIC else 0.5)
+                s.true_attendance[subj] = new_attended / max(total_classes_possible, 1)
+
+                # knowledge gain
+                rate = s.latent.true_learning_rates.get(subj, 0.8)
+                noise_factor = self.noise.coin_flip(0.1)  # small random variance
+                gain = rate * (12.0 if at == ActionType.CRAM_MODE else 3.0) * (1 - noise_factor * 0.2)
+                s.true_knowledge[subj] = min(100.0, s.true_knowledge[subj] + gain)
+
+                # Synergy bonuses from attending class
+                subj_enum = SubjectType(subj) if subj in SubjectType._value2member_map_ else None
+                if subj_enum and subj_enum in SUBJECT_SKILL_SYNERGY:
+                    for skill_enum, bonus in SUBJECT_SKILL_SYNERGY[subj_enum].items():
+                        s.true_skills[skill_enum.value] = min(
+                            30.0, s.true_skills[skill_enum.value] + bonus
+                        )
+
+        elif at == ActionType.BALANCED_LIFE:
+            for subj in subjects:
+                total_classes_possible = s.resources.day_current
+                current_attended = s.true_attendance[subj] * max(total_classes_possible - 1, 1)
+                new_attended = current_attended + 0.5
+                s.true_attendance[subj] = new_attended / max(total_classes_possible, 1)
+                rate = s.latent.true_learning_rates.get(subj, 0.8)
+                s.true_knowledge[subj] = min(100.0, s.true_knowledge[subj] + rate * 1.5)
+
+        # Surprise quiz penalty
+        if s.last_quiz_triggered:
+            for subj in subjects:
+                if s.true_attendance[subj] < 0.6:
+                    s.true_knowledge[subj] = max(0.0, s.true_knowledge[subj] - 5.0)
+
+    def _update_skill_state(
+        self, s: FullLatentState, action: StudentAction
+    ) -> None:
+        at = action.action_type
+        if at == ActionType.SKILL_DEEP_DIVE and action.skill_target:
+            skill = action.skill_target.value
+            rate = s.latent.true_skill_rates.get(skill, 1.0)
+            noise = self.noise.quality_degradation(0.1)
+            gain = rate * 2.0 * (1 - noise)
+            s.true_skills[skill] = min(30.0, s.true_skills.get(skill, 0.0) + gain)
+
+        elif at == ActionType.BALANCED_LIFE and action.skill_target:
+            skill = action.skill_target.value
+            rate = s.latent.true_skill_rates.get(skill, 1.0)
+            s.true_skills[skill] = min(30.0, s.true_skills.get(skill, 0.0) + rate * 1.0)
+
+    def _update_project_state(
+        self, s: FullLatentState, action: StudentAction
+    ) -> None:
+        if action.action_type != ActionType.PROJECT_SPRINT:
             return
-        # Efficiency drawn from the same distribution as the output handler
-        # so latent state and observable output are coherent.
-        if action.action_type == ActionType.PERTURB_GENE:
-            efficiency = self.noise.sample_qc_metric(0.80, 0.12, 0.0, 1.0)
-        else:
-            efficiency = self.noise.sample_qc_metric(0.70, 0.15, 0.0, 1.0)
-        s.last_perturbation_efficiency = efficiency
-        for gene_map in s.biology.true_de_genes.values():
-            for gene, delta in effects.items():
-                gene_map[gene] = gene_map.get(gene, 0.0) + delta * efficiency
+        if not action.project_target:
+            return
 
-    def _propagate_artifacts(
-        self,
-        s: FullLatentState,
-        action: ExperimentAction,
-        output: IntermediateOutput,
-    ) -> None:
-        if action.action_type == ActionType.DIFFERENTIAL_EXPRESSION:
-            top = output.data.get("top_genes", [])
-            s.discovered_de_genes = [g["gene"] for g in top[:20]]
-            s.progress.n_de_genes_found = output.data.get("n_significant", 0)
+        tier = action.project_target
+        tier_str = tier.value
 
-        if action.action_type == ActionType.CLUSTER_CELLS:
-            s.discovered_clusters = output.data.get("cluster_names", [])
+        # Check if already completed (diminishing returns handled in rules)
+        times_done = s.completed_projects.count(tier_str)
+        effectiveness = 1.0 / (times_done + 1)
 
-        if action.action_type == ActionType.MARKER_SELECTION:
-            s.progress.n_markers_found = output.data.get("n_candidates", 0)
+        if s.active_project_tier != tier_str:
+            # Switching project resets progress
+            s.active_project_tier = tier_str
+            s.true_project_progress = 0.0
+
+        noise = self.noise.quality_degradation(0.1)
+        progress_gain = 0.25 * effectiveness * (1 - noise)
+
+        # Burnout slows project work
+        if s.resources.fatigue_current >= s.latent.true_fatigue_threshold:
+            progress_gain *= 0.3
+
+        s.true_project_progress = min(1.0, s.true_project_progress + progress_gain)
+
+        if s.true_project_progress >= 1.0:
+            s.completed_projects.append(tier_str)
+            s.true_project_progress = 0.0
+            s.active_project_tier = None
+
+    def _update_progress_flags(self, s: FullLatentState) -> None:
+        p = s.progress
+        attendance = s.true_attendance
+        skills = s.true_skills
+
+        p.attended_first_class = any(a > 0 for a in attendance.values())
+        p.above_75_attendance_any = any(a >= 0.75 for a in attendance.values())
+        p.above_75_attendance_all = all(a >= 0.75 for a in attendance.values())
+        p.studied_all_subjects = all(a > 0 for a in attendance.values())
+        p.exam_eligible = all(a >= 0.40 for a in attendance.values())
+
+        p.first_skill_acquired = any(v > 0 for v in skills.values())
+        p.any_skill_above_10 = any(v >= 10.0 for v in skills.values())
+
+        # Project prereqs
+        basic_prereqs = PROJECT_PREREQS[ProjectTier.BASIC]
+        p.skill_prereqs_basic_met = all(
+            skills.get(k.value, 0) >= v for k, v in basic_prereqs.items()
+        )
+        fullstack_prereqs = PROJECT_PREREQS[ProjectTier.FULLSTACK]
+        p.skill_prereqs_fullstack_met = all(
+            skills.get(k.value, 0) >= v for k, v in fullstack_prereqs.items()
+        )
+        cloud_prereqs = PROJECT_PREREQS[ProjectTier.CLOUD]
+        p.skill_prereqs_cloud_met = all(
+            skills.get(k.value, 0) >= v for k, v in cloud_prereqs.items()
+        )
+
+        p.basic_project_done = "basic" in s.completed_projects
+        p.fullstack_project_done = "fullstack" in s.completed_projects
+        p.cloud_project_done = "cloud" in s.completed_projects
+
+        # Exam logic: only on/after exam day
+        exam_day = 300
+        if s.resources.day_current >= exam_day and p.exam_eligible:
+            p.exam_taken = True
+            # Pass if knowledge > 40 in all subjects (adjusted by difficulty)
+            p.passed_all_subjects = all(
+                s.true_knowledge.get(subj, 0) / s.latent.true_exam_difficulty.get(subj, 1.0) >= 40.0
+                for subj in s.true_attendance.keys()
+            )
+            if not p.exam_eligible or not p.passed_all_subjects:
+                p.academic_failed = True
+
+        if s.resources.fatigue_current >= s.latent.true_fatigue_threshold:
+            p.burnout_occurred = True
+
+        # Counters
+        # (incremented outside, just ensure flags are consistent)

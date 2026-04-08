@@ -1,142 +1,52 @@
-"""Task generator — produces (TaskSpec, FullLatentState) pairs for episodes.
-
-Supports three modes:
-  1. Select from the pre-defined scenario library.
-  2. Randomly perturb a scenario for domain-randomisation.
-  3. Compose a fully procedural scenario (tissue × modality × difficulty).
-"""
+"""Task generator for StudentGrad — with domain randomisation."""
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+import random
+from typing import Optional, Tuple
 
-import numpy as np
-
-from models import TaskSpec, tools_for_modality, assays_for_modality
-
-from server.simulator.latent_state import (
-    CellPopulation,
-    ExperimentProgress,
-    FullLatentState,
-    GeneProgram,
-    LatentBiologicalState,
-    ResourceState,
-    TechnicalState,
-)
-from .scenarios import SCENARIO_LIBRARY, Scenario
-from .procedural_generator import generate_procedural_scenarios
+from models import StudentTaskSpec
+from server.simulator.latent_state import FullLatentState, StudentContextState, LatentStudentState
+from server.tasks.scenarios import SCENARIOS, SCENARIO_MAP, get_scenario
 
 
 class TaskGenerator:
-    """Generates task + latent-state pairs for environment episodes."""
-
-    def __init__(
-        self,
-        scenarios: Optional[List[Scenario]] = None,
-        domain_randomise: bool = True,
-    ):
-        if scenarios is not None:
-            self.scenarios = scenarios
-        else:
-            self.scenarios = list(SCENARIO_LIBRARY) + generate_procedural_scenarios(n=20, seed=42)
+    def __init__(self, domain_randomise: bool = True):
         self.domain_randomise = domain_randomise
 
     def generate(
         self,
-        *,
-        seed: Optional[int] = None,
+        seed: int = 42,
         scenario_name: Optional[str] = None,
-    ) -> Tuple[TaskSpec, FullLatentState]:
-        rng = np.random.default_rng(seed)
+    ) -> Tuple[StudentTaskSpec, FullLatentState]:
+        rng = random.Random(seed)
 
-        if scenario_name:
-            scenario = self._find_scenario(scenario_name)
+        if scenario_name and scenario_name in SCENARIO_MAP:
+            scenario = get_scenario(scenario_name)
         else:
-            idx = int(rng.integers(0, len(self.scenarios)))
-            scenario = self.scenarios[idx]
+            # Default to hard scenario for hackathon
+            scenario = SCENARIO_MAP.get("hard_full_year", SCENARIOS[-1])
 
-        task = scenario.task.model_copy(deep=True)
-        biology = scenario.biology.model_copy(deep=True)
-        technical = scenario.technical.model_copy(deep=True)
+        full_state = scenario.build_full_state()
+        full_state.rng_seed = seed
 
         if self.domain_randomise:
-            self._randomise(rng, task, biology, technical)
+            self._randomise(full_state, rng)
 
-        # Filter available tools/assays to those compatible with the modality.
-        compatible_tools = [t.name for t in tools_for_modality(task.modality)]
-        compatible_assays = [a.name for a in assays_for_modality(task.modality)]
-        if compatible_tools:
-            task.available_tools = compatible_tools
-        if compatible_assays:
-            task.available_assays = compatible_assays
+        return scenario.task, full_state
 
-        latent = FullLatentState(
-            biology=biology,
-            technical=technical,
-            progress=ExperimentProgress(),
-            resources=ResourceState(
-                budget_total=task.budget_limit,
-                time_limit_days=task.time_limit_days,
-            ),
-            hidden_failure_conditions=list(scenario.hidden_failure_conditions),
-            task_modality=task.modality,
-            rng_seed=seed or 0,
-        )
-        return task, latent
+    def _randomise(self, state: FullLatentState, rng: random.Random) -> None:
+        """Perturb parameters ±20% so agent can't memorise fixed numbers."""
+        def jitter(v: float, frac: float = 0.2) -> float:
+            return v * (1.0 + rng.uniform(-frac, frac))
 
-    def list_scenarios(self) -> List[str]:
-        return [s.name for s in self.scenarios]
+        lat = state.latent
+        lat.true_learning_rates = {k: min(2.0, max(0.1, jitter(v))) for k, v in lat.true_learning_rates.items()}
+        lat.true_fatigue_threshold = min(95.0, max(60.0, jitter(lat.true_fatigue_threshold, 0.15)))
+        lat.true_exam_difficulty = {k: min(2.0, max(0.5, jitter(v, 0.15))) for k, v in lat.true_exam_difficulty.items()}
+        lat.true_skill_rates = {k: min(2.0, max(0.3, jitter(v))) for k, v in lat.true_skill_rates.items()}
 
-    # ── internals ───────────────────────────────────────────────────────
-
-    def _find_scenario(self, name: str) -> Scenario:
-        for s in self.scenarios:
-            if s.name == name:
-                return s
-        available = ", ".join(self.list_scenarios())
-        raise ValueError(f"Unknown scenario '{name}'. Available: {available}")
-
-    def _randomise(
-        self,
-        rng: np.random.Generator,
-        task: TaskSpec,
-        bio: LatentBiologicalState,
-        tech: TechnicalState,
-    ) -> None:
-        budget_scale = float(rng.uniform(0.7, 1.3))
-        task.budget_limit *= budget_scale
-        task.time_limit_days *= float(rng.uniform(0.8, 1.2))
-
-        tech.dropout_rate = float(np.clip(
-            tech.dropout_rate + rng.normal(0, 0.02), 0.01, 0.3
-        ))
-        tech.doublet_rate = float(np.clip(
-            tech.doublet_rate + rng.normal(0, 0.01), 0.01, 0.15
-        ))
-        tech.sample_quality = float(np.clip(
-            tech.sample_quality + rng.normal(0, 0.05), 0.5, 1.0
-        ))
-        tech.ambient_rna_fraction = float(np.clip(
-            tech.ambient_rna_fraction + rng.normal(0, 0.01), 0.01, 0.15
-        ))
-        for batch_id in list(tech.batch_effects.keys()):
-            tech.batch_effects[batch_id] = float(np.clip(
-                tech.batch_effects[batch_id] + rng.normal(0, 0.03), 0.0, 0.4
-            ))
-
-        for pop in bio.cell_populations:
-            pop.proportion = float(np.clip(
-                pop.proportion * rng.uniform(0.8, 1.2), 0.01, 0.8
-            ))
-        total = sum(p.proportion for p in bio.cell_populations) or 1.0
-        for pop in bio.cell_populations:
-            pop.proportion /= total
-
-        for comparison, effects in bio.true_de_genes.items():
-            for gene in list(effects.keys()):
-                effects[gene] *= float(rng.uniform(0.8, 1.2))
-
-        bio.n_true_cells = max(
-            1000,
-            int(bio.n_true_cells * rng.uniform(0.6, 1.4)),
-        )
+        ctx = state.context
+        ctx.sick_probability = min(0.15, max(0.01, jitter(ctx.sick_probability, 0.3)))
+        ctx.quiz_probability = min(0.10, max(0.01, jitter(ctx.quiz_probability, 0.3)))
+        ctx.base_noise = min(0.3, max(0.02, jitter(ctx.base_noise, 0.2)))

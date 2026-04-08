@@ -1,153 +1,158 @@
-"""Latent biological and technical state — hidden from the agent."""
+"""Hidden student world state — never directly visible to the agent."""
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 
-class CellPopulation(BaseModel):
-    """Ground-truth cell sub-population in the simulated tissue."""
+class LatentStudentState(BaseModel):
+    """Ground truth the agent cannot observe directly."""
 
-    name: str
-    proportion: float = Field(ge=0.0, le=1.0)
-    marker_genes: List[str] = Field(default_factory=list)
-    state: str = "quiescent"
-    condition_response: Dict[str, float] = Field(default_factory=dict)
-
-
-class GeneProgram(BaseModel):
-    """A latent gene-regulatory programme."""
-
-    name: str
-    genes: List[str] = Field(default_factory=list)
-    activity_level: float = Field(0.5, ge=0.0, le=1.0)
-    condition_dependent: bool = False
-    conditions_active: List[str] = Field(default_factory=list)
-
-
-class LatentBiologicalState(BaseModel):
-    """Hidden ground-truth biology the agent cannot directly observe."""
-
-    cell_populations: List[CellPopulation] = Field(default_factory=list)
-    true_de_genes: Dict[str, Dict[str, float]] = Field(
-        default_factory=dict,
-        description="comparison_key → {gene: log2FC}",
+    # True learning rates per subject (how much knowledge per study hour)
+    true_learning_rates: Dict[str, float] = Field(
+        default_factory=lambda: {
+            "dsa": 0.8, "dbms": 0.9, "os": 0.75, "maths": 0.7, "coa": 0.85
+        }
     )
-    true_pathways: Dict[str, float] = Field(
-        default_factory=dict,
-        description="pathway → activity level",
+    # True fatigue threshold — agent doesn't know exactly when burnout kicks in
+    true_fatigue_threshold: float = 80.0
+
+    # True exam difficulty multiplier per subject (higher = harder)
+    true_exam_difficulty: Dict[str, float] = Field(
+        default_factory=lambda: {
+            "dsa": 1.2, "dbms": 1.0, "os": 1.1, "maths": 1.3, "coa": 1.0
+        }
     )
-    gene_programs: List[GeneProgram] = Field(default_factory=list)
-    true_trajectory: Optional[Dict[str, Any]] = None
-    true_regulatory_network: Dict[str, List[str]] = Field(
-        default_factory=dict,
-        description="TF → target genes",
+    # True skill acquisition rates
+    true_skill_rates: Dict[str, float] = Field(
+        default_factory=lambda: {
+            "js": 1.0, "node": 0.9, "docker": 0.85, "html": 1.2, "css": 1.1
+        }
     )
-    perturbation_effects: Dict[str, Dict[str, float]] = Field(
-        default_factory=dict,
-        description="perturbation → {gene: effect_size}",
-    )
-    confounders: Dict[str, float] = Field(default_factory=dict)
-    true_markers: List[str] = Field(default_factory=list)
-    causal_mechanisms: List[str] = Field(default_factory=list)
-    n_true_cells: int = 10_000
 
 
-class TechnicalState(BaseModel):
-    """Hidden technical parameters that shape experimental noise."""
-
-    batch_effects: Dict[str, float] = Field(default_factory=dict)
-    ambient_rna_fraction: float = 0.05
-    doublet_rate: float = 0.04
-    dropout_rate: float = 0.1
-    sample_quality: float = Field(0.9, ge=0.0, le=1.0)
-    library_complexity: float = Field(0.8, ge=0.0, le=1.0)
-    sequencing_depth_factor: float = 1.0
-    capture_efficiency: float = 0.6
+class StudentContextState(BaseModel):
+    """Noise / context parameters shaping daily variation."""
+    base_noise: float = 0.1          # Gaussian noise on all outputs
+    sick_probability: float = 0.05   # daily probability of sick day
+    quiz_probability: float = 0.03   # daily probability of surprise quiz
+    sick_duration_days: int = 2
+    energy_recovery_rate: float = 1.0  # multiplier on REST recovery
 
 
-class ExperimentProgress(BaseModel):
-    """Flags tracking which experiment stages have been completed."""
+class StudentProgress(BaseModel):
+    """Boolean milestone flags — shared across engine, rules, reward."""
 
-    samples_collected: bool = False
-    cohort_selected: bool = False
-    cells_cultured: bool = False
-    library_prepared: bool = False
-    perturbation_applied: bool = False
-    cells_sequenced: bool = False
-    qc_performed: bool = False
-    data_filtered: bool = False
-    data_normalized: bool = False
-    batches_integrated: bool = False
-    cells_clustered: bool = False
-    de_performed: bool = False
-    trajectories_inferred: bool = False
-    pathways_analyzed: bool = False
-    networks_inferred: bool = False
-    markers_discovered: bool = False
-    markers_validated: bool = False
-    followup_designed: bool = False
-    subagent_review_requested: bool = False
-    conclusion_reached: bool = False
+    # Academic milestones
+    attended_first_class: bool = False
+    above_75_attendance_any: bool = False       # any subject ≥ 75%
+    above_75_attendance_all: bool = False       # all subjects ≥ 75%
+    studied_all_subjects: bool = False
+    exam_eligible: bool = False                 # all attendance ≥ 40%
+    exam_taken: bool = False
+    passed_all_subjects: bool = False
 
-    n_cells_sequenced: Optional[int] = None
-    n_cells_after_filter: Optional[int] = None
-    n_clusters_found: Optional[int] = None
-    n_de_genes_found: Optional[int] = None
-    n_markers_found: Optional[int] = None
+    # Skill milestones
+    first_skill_acquired: bool = False
+    any_skill_above_10: bool = False
+    skill_prereqs_basic_met: bool = False
+    skill_prereqs_fullstack_met: bool = False
+    skill_prereqs_cloud_met: bool = False
+
+    # Project milestones
+    basic_project_done: bool = False
+    fullstack_project_done: bool = False
+    cloud_project_done: bool = False
+
+    # Safety
+    burnout_occurred: bool = False
+    academic_failed: bool = False               # attendance or score < 40
+
+    # Counters
+    total_days_studied: int = 0
+    total_skill_days: int = 0
+    total_rest_days: int = 0
+    total_cram_days: int = 0
+    sick_days_remaining: int = 0                # countdown for sick event
 
 
 class ResourceState(BaseModel):
-    """Full internal resource tracking (superset of agent-visible ResourceUsage)."""
+    """Day/energy tracking (mirrors the bio ResourceState interface)."""
 
-    budget_total: float = 100_000.0
-    budget_used: float = 0.0
-    time_limit_days: float = 180.0
-    time_used_days: float = 0.0
-    samples_available: int = 0
-    samples_consumed: int = 0
-    compute_hours_used: float = 0.0
-    sequencing_lanes_used: int = 0
-    reagent_kits_used: int = 0
+    day_total: int = 365
+    day_current: int = 0
+    energy_max: float = 10.0
+    energy_current: float = 10.0
+    fatigue_current: float = 0.0
+
+    @property
+    def days_remaining(self) -> int:
+        return max(0, self.day_total - self.day_current)
 
     @property
     def budget_remaining(self) -> float:
-        return max(0.0, self.budget_total - self.budget_used)
+        """Alias so reward.py can use the same interface."""
+        return float(self.days_remaining)
+
+    @property
+    def budget_total(self) -> float:
+        return float(self.day_total)
+
+    @property
+    def budget_used(self) -> float:
+        return float(self.day_current)
 
     @property
     def time_remaining_days(self) -> float:
-        return max(0.0, self.time_limit_days - self.time_used_days)
+        return float(self.days_remaining)
+
+    @property
+    def time_limit_days(self) -> float:
+        return float(self.day_total)
 
     @property
     def budget_exhausted(self) -> bool:
-        return self.budget_remaining <= 0
+        return self.day_current >= self.day_total
 
     @property
     def time_exhausted(self) -> bool:
-        return self.time_remaining_days <= 0
+        return self.budget_exhausted
 
 
 class FullLatentState(BaseModel):
-    """Complete hidden state of the simulated biological world."""
+    """Complete hidden state of the student simulation world."""
 
-    biology: LatentBiologicalState = Field(
-        default_factory=LatentBiologicalState
-    )
-    technical: TechnicalState = Field(default_factory=TechnicalState)
-    progress: ExperimentProgress = Field(default_factory=ExperimentProgress)
+    latent: LatentStudentState = Field(default_factory=LatentStudentState)
+    context: StudentContextState = Field(default_factory=StudentContextState)
+    progress: StudentProgress = Field(default_factory=StudentProgress)
     resources: ResourceState = Field(default_factory=ResourceState)
-    hidden_failure_conditions: List[str] = Field(default_factory=list)
-    mechanism_confidence: Dict[str, float] = Field(default_factory=dict)
-    discovered_de_genes: List[str] = Field(default_factory=list)
-    discovered_clusters: List[str] = Field(default_factory=list)
-    task_modality: str = "scRNA-seq"
-    step_count: int = 0
-    rng_seed: int = 42
 
-    # Transient fields for passing sampled values from the transition engine
-    # to the output generator within a single step (not serialized).
-    last_retain_frac: Optional[float] = Field(None, exclude=True)
-    last_n_clusters: Optional[int] = Field(None, exclude=True)
-    last_perturbation_efficiency: Optional[float] = Field(None, exclude=True)
+    # True internal academic state (noisy version exposed in observation)
+    true_attendance: Dict[str, float] = Field(
+        default_factory=lambda: {
+            "dsa": 0.0, "dbms": 0.0, "os": 0.0, "maths": 0.0, "coa": 0.0
+        }
+    )
+    true_knowledge: Dict[str, float] = Field(
+        default_factory=lambda: {
+            "dsa": 10.0, "dbms": 10.0, "os": 10.0, "maths": 10.0, "coa": 10.0
+        }
+    )
+    true_skills: Dict[str, float] = Field(
+        default_factory=lambda: {
+            "js": 0.0, "node": 0.0, "docker": 0.0, "html": 0.0, "css": 0.0
+        }
+    )
+    true_project_progress: float = 0.0         # progress on current active project
+    active_project_tier: Optional[str] = None  # tier being worked on
+    completed_projects: List[str] = Field(default_factory=list)
+
+    hidden_failure_conditions: List[str] = Field(default_factory=list)
+    rng_seed: int = 42
+    step_count: int = 0
+
+    # Transient (not serialized) — used within a single step
+    last_sick_triggered: Optional[bool] = Field(None, exclude=True)
+    last_quiz_triggered: Optional[bool] = Field(None, exclude=True)

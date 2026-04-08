@@ -1,7 +1,6 @@
 spec_version: 1
-name: hackathon
+name: student-optimizer
 type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
-

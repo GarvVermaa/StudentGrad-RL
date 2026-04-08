@@ -1,38 +1,25 @@
-"""FastAPI application for the Bio-Experiment Planning Environment.
-
-Endpoints:
-    - POST /reset:  Reset the environment
-    - POST /step:   Execute an action
-    - GET  /state:  Get current environment state
-    - GET  /schema: Get action/observation schemas
-    - WS   /ws:     WebSocket endpoint for persistent sessions
-    - GET  /        Demo UI
-"""
+"""FastAPI application for StudentGrad Environment."""
 
 import os
 from pathlib import Path
 
 try:
     from openenv.core.env_server.http_server import create_app
-except Exception as e:  # pragma: no cover
-    raise ImportError(
-        "openenv is required for the web interface. "
-        "Install dependencies with 'uv sync'"
-    ) from e
+except Exception as e:
+    raise ImportError("openenv is required. Run 'uv sync'") from e
 
 from fastapi.responses import HTMLResponse
-from models import ExperimentAction, ExperimentObservation
-from .hackathon_environment import BioExperimentEnvironment
+from models import StudentAction, StudentObservation
+from .student_environment import StudentEnvironment
 
 app = create_app(
-    BioExperimentEnvironment,
-    ExperimentAction,
-    ExperimentObservation,
-    env_name="bio_experiment",
+    StudentEnvironment,
+    StudentAction,
+    StudentObservation,
+    env_name="student_optimizer",
     max_concurrent_envs=int(os.environ.get("MAX_ENVS", "4")),
 )
 
-# Serve demo UI at root
 DEMO_HTML = Path(__file__).resolve().parent.parent / "demo.html"
 
 
@@ -40,7 +27,10 @@ DEMO_HTML = Path(__file__).resolve().parent.parent / "demo.html"
 async def demo_ui():
     if DEMO_HTML.exists():
         return HTMLResponse(content=DEMO_HTML.read_text(), status_code=200)
-    return HTMLResponse(content="<h1>BioEnv API</h1><p>Visit /docs for API documentation.</p>", status_code=200)
+    return HTMLResponse(
+        content="<h1>StudentGrad API</h1><p>Visit /docs</p>",
+        status_code=200,
+    )
 
 
 def main(host: str = "0.0.0.0", port: int = None):
