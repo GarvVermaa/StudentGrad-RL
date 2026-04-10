@@ -27,7 +27,7 @@ class OutputGenerator:
         step_index: int,
     ) -> DailyOutput:
         handler = self._HANDLERS.get(action.action_type, self._default)
-        return handler(action, state, step_index)
+        return handler(self, action, state, step_index)
 
     # ── handlers ────────────────────────────────────────────────────────
 

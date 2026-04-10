@@ -1,128 +1,54 @@
-"""Integration tests for the full BioExperimentEnvironment."""
+"""Integration tests for StudentEnvironment."""
+import pytest
+from models import ActionType, StudentAction, SkillType, ProjectTier
+from server.student_environment import StudentEnvironment
 
-from models import ActionType, ExperimentAction
-from server.hackathon_environment import BioExperimentEnvironment
+
+def make_env() -> StudentEnvironment:
+    env = StudentEnvironment(scenario_name="easy_single_subject")
+    env.reset(seed=42)
+    return env
 
 
-class TestEnvironmentLifecycle:
-    def test_reset_returns_valid_observation(self):
-        env = BioExperimentEnvironment()
-        obs = env.reset()
-        assert obs.step_index == 0
-        assert obs.done is False
-        assert obs.task.problem_statement != ""
+def test_reset_returns_observation():
+    env = StudentEnvironment()
+    obs = env.reset(seed=0)
+    assert obs.day == 0 or obs.day >= 0
+    assert obs.energy > 0
 
-    def test_step_increments_step_count(self):
-        env = BioExperimentEnvironment()
-        env.reset()
-        obs = env.step(ExperimentAction(action_type=ActionType.COLLECT_SAMPLE))
-        assert obs.step_index == 1
-        assert env.state.step_count == 1
 
-    def test_valid_pipeline_trajectory(self):
-        env = BioExperimentEnvironment()
-        env.reset()
+def test_step_full_academic():
+    env = make_env()
+    obs = env.step(StudentAction(action_type=ActionType.FULL_ACADEMIC))
+    assert obs is not None
+    assert isinstance(obs.reward, float)
 
-        actions = [
-            ExperimentAction(action_type=ActionType.COLLECT_SAMPLE,
-                             parameters={"n_samples": 6}),
-            ExperimentAction(action_type=ActionType.PREPARE_LIBRARY,
-                             method="10x_chromium"),
-            ExperimentAction(action_type=ActionType.SEQUENCE_CELLS),
-            ExperimentAction(action_type=ActionType.RUN_QC),
-            ExperimentAction(action_type=ActionType.FILTER_DATA),
-            ExperimentAction(action_type=ActionType.NORMALIZE_DATA),
-            ExperimentAction(action_type=ActionType.CLUSTER_CELLS),
-            ExperimentAction(action_type=ActionType.DIFFERENTIAL_EXPRESSION,
-                             parameters={"comparison": "disease_vs_healthy"}),
-        ]
 
-        for a in actions:
-            obs = env.step(a)
-            assert obs.latest_output is not None
-            assert obs.latest_output.success is True, (
-                f"Step {a.action_type} failed: {obs.rule_violations}"
-            )
+def test_step_skill_deep_dive():
+    env = make_env()
+    obs = env.step(StudentAction(
+        action_type=ActionType.SKILL_DEEP_DIVE,
+        skill_target=SkillType.JS,
+    ))
+    assert obs is not None
 
-        assert obs.step_index == len(actions)
-        assert obs.resource_usage.budget_used > 0
 
-    def test_premature_de_blocked(self):
-        env = BioExperimentEnvironment()
-        env.reset()
-        obs = env.step(ExperimentAction(
-            action_type=ActionType.DIFFERENTIAL_EXPRESSION,
-        ))
-        assert obs.latest_output is not None
-        assert obs.latest_output.success is False
+def test_step_rest():
+    env = make_env()
+    obs = env.step(StudentAction(action_type=ActionType.REST))
+    assert obs.fatigue <= 10.0  # rest should reduce fatigue
 
-    def test_premature_followup_design_is_flagged(self):
-        env = BioExperimentEnvironment()
-        env.reset()
-        obs = env.step(ExperimentAction(
-            action_type=ActionType.DESIGN_FOLLOWUP,
-            parameters={"assay": "qPCR"},
-        ))
-        assert obs.latest_output is not None
-        assert obs.latest_output.success is False
-        assert any("follow-up design" in msg.lower() for msg in obs.rule_violations)
 
-    def test_conclusion_ends_episode(self):
-        env = BioExperimentEnvironment()
-        env.reset()
+def test_multiple_steps():
+    env = make_env()
+    for _ in range(10):
+        obs = env.step(StudentAction(action_type=ActionType.BALANCED_LIFE))
+    assert obs.step_index == 10
 
-        quick_pipeline = [
-            ExperimentAction(action_type=ActionType.COLLECT_SAMPLE),
-            ExperimentAction(action_type=ActionType.PREPARE_LIBRARY),
-            ExperimentAction(action_type=ActionType.SEQUENCE_CELLS),
-            ExperimentAction(action_type=ActionType.RUN_QC),
-            ExperimentAction(action_type=ActionType.FILTER_DATA),
-            ExperimentAction(action_type=ActionType.NORMALIZE_DATA),
-            ExperimentAction(action_type=ActionType.CLUSTER_CELLS),
-            ExperimentAction(action_type=ActionType.DIFFERENTIAL_EXPRESSION,
-                             parameters={"comparison": "disease_vs_healthy"}),
-            ExperimentAction(action_type=ActionType.PATHWAY_ENRICHMENT),
-            ExperimentAction(action_type=ActionType.MARKER_SELECTION),
-            ExperimentAction(
-                action_type=ActionType.SYNTHESIZE_CONCLUSION,
-                parameters={"claims": [
-                    {"claim": "Test conclusion", "confidence": 0.7,
-                     "claim_type": "correlational"},
-                ]},
-            ),
-        ]
-        for a in quick_pipeline:
-            obs = env.step(a)
 
-        assert obs.done is True
-        assert obs.reward != 0.0
-
-    def test_blocked_conclusion_does_not_persist_claims(self):
-        env = BioExperimentEnvironment()
-        env.reset()
-
-        pipeline = [
-            ExperimentAction(action_type=ActionType.COLLECT_SAMPLE),
-            ExperimentAction(action_type=ActionType.PREPARE_LIBRARY),
-            ExperimentAction(action_type=ActionType.SEQUENCE_CELLS),
-            ExperimentAction(action_type=ActionType.RUN_QC),
-            ExperimentAction(action_type=ActionType.FILTER_DATA),
-            ExperimentAction(action_type=ActionType.NORMALIZE_DATA),
-            ExperimentAction(action_type=ActionType.CLUSTER_CELLS),
-        ]
-        for action in pipeline:
-            obs = env.step(action)
-            assert obs.latest_output is not None
-            assert obs.latest_output.success is True
-
-        obs = env.step(ExperimentAction(
-            action_type=ActionType.SYNTHESIZE_CONCLUSION,
-            parameters={"claims": [
-                {"claim": "Premature conclusion", "confidence": 0.9},
-            ]},
-        ))
-
-        assert obs.latest_output is not None
-        assert obs.latest_output.success is False
-        assert obs.conclusions == []
-        assert any("markers" in msg.lower() for msg in obs.rule_violations)
+def test_submit_outcome_terminates():
+    env = make_env()
+    for _ in range(5):
+        env.step(StudentAction(action_type=ActionType.FULL_ACADEMIC))
+    obs = env.step(StudentAction(action_type=ActionType.SUBMIT_OUTCOME))
+    assert obs.done is True

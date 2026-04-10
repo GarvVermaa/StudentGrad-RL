@@ -1,11 +1,10 @@
-"""Trajectory serialisation and dataset utilities.
+"""Trajectory serialisation and dataset utilities for StudentGrad.
 
 A ``Trajectory`` stores the full history of one episode (task, actions,
-observations, rewards, latent-state snapshots) in a format that supports:
+observations, rewards) in a format that supports:
   - offline RL training
   - imitation learning from expert demonstrations
   - evaluation / replay
-  - simulator calibration
 """
 
 from __future__ import annotations
@@ -15,12 +14,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from models import (
-    ExperimentAction,
-    ExperimentObservation,
-    TaskSpec,
-)
-
 
 @dataclass
 class TrajectoryStep:
@@ -28,14 +21,13 @@ class TrajectoryStep:
     action: Dict[str, Any]
     observation: Dict[str, Any]
     reward: float
-    done: bool
-    reward_breakdown: Dict[str, float] = field(default_factory=dict)
-    latent_snapshot: Optional[Dict[str, Any]] = None
+    done: bool = False
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class Trajectory:
-    """Complete record of one environment episode."""
+    """Full record of one StudentGrad episode."""
 
     episode_id: str
     task: Dict[str, Any]
@@ -44,31 +36,27 @@ class Trajectory:
     success: bool = False
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-    # ── construction helpers ────────────────────────────────────────────
-
     def add_step(
         self,
-        action: ExperimentAction,
-        observation: ExperimentObservation,
+        action: Dict[str, Any],
+        observation: Dict[str, Any],
         reward: float,
-        done: bool,
-        reward_breakdown: Optional[Dict[str, float]] = None,
-        latent_snapshot: Optional[Dict[str, Any]] = None,
+        done: bool = False,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self.steps.append(TrajectoryStep(
-            step_index=len(self.steps),
-            action=action.model_dump(),
-            observation=observation.model_dump(),
-            reward=reward,
-            done=done,
-            reward_breakdown=reward_breakdown or {},
-            latent_snapshot=latent_snapshot,
-        ))
+        self.steps.append(
+            TrajectoryStep(
+                step_index=len(self.steps),
+                action=action,
+                observation=observation,
+                reward=reward,
+                done=done,
+                metadata=metadata or {},
+            )
+        )
         self.total_reward += reward
         if done:
             self.success = reward > 0
-
-    # ── serialisation ───────────────────────────────────────────────────
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -81,8 +69,7 @@ class Trajectory:
                     "observation": s.observation,
                     "reward": s.reward,
                     "done": s.done,
-                    "reward_breakdown": s.reward_breakdown,
-                    "latent_snapshot": s.latent_snapshot,
+                    "metadata": s.metadata,
                 }
                 for s in self.steps
             ],
@@ -91,69 +78,52 @@ class Trajectory:
             "metadata": self.metadata,
         }
 
-    def save(self, path: str | Path) -> None:
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "w") as f:
-            json.dump(self.to_dict(), f, indent=2, default=str)
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self.to_dict(), indent=2))
 
     @classmethod
-    def load(cls, path: str | Path) -> "Trajectory":
-        with open(path) as f:
-            d = json.load(f)
+    def load(cls, path: Path) -> "Trajectory":
+        data = json.loads(path.read_text())
         traj = cls(
-            episode_id=d["episode_id"],
-            task=d["task"],
-            total_reward=d.get("total_reward", 0.0),
-            success=d.get("success", False),
-            metadata=d.get("metadata", {}),
+            episode_id=data["episode_id"],
+            task=data["task"],
+            total_reward=data.get("total_reward", 0.0),
+            success=data.get("success", False),
+            metadata=data.get("metadata", {}),
         )
-        for s in d.get("steps", []):
-            traj.steps.append(TrajectoryStep(**s))
+        for s in data.get("steps", []):
+            traj.steps.append(
+                TrajectoryStep(
+                    step_index=s["step_index"],
+                    action=s["action"],
+                    observation=s["observation"],
+                    reward=s["reward"],
+                    done=s.get("done", False),
+                    metadata=s.get("metadata", {}),
+                )
+            )
         return traj
 
 
 class TrajectoryDataset:
-    """In-memory collection of trajectories with convenience accessors."""
+    """Collection of trajectories with basic filtering utilities."""
 
-    def __init__(self, trajectories: Optional[List[Trajectory]] = None):
+    def __init__(self, trajectories: Optional[List[Trajectory]] = None) -> None:
         self.trajectories: List[Trajectory] = trajectories or []
 
     def add(self, traj: Trajectory) -> None:
         self.trajectories.append(traj)
 
-    def __len__(self) -> int:
-        return len(self.trajectories)
+    def successful(self) -> List[Trajectory]:
+        return [t for t in self.trajectories if t.success]
 
-    def __getitem__(self, idx: int) -> Trajectory:
-        return self.trajectories[idx]
-
-    def filter_successful(self) -> "TrajectoryDataset":
-        return TrajectoryDataset([t for t in self.trajectories if t.success])
-
-    def save_dir(self, directory: str | Path) -> None:
-        d = Path(directory)
-        d.mkdir(parents=True, exist_ok=True)
-        for t in self.trajectories:
-            t.save(d / f"{t.episode_id}.json")
-
-    @classmethod
-    def load_dir(cls, directory: str | Path) -> "TrajectoryDataset":
-        d = Path(directory)
-        trajs = [Trajectory.load(p) for p in sorted(d.glob("*.json"))]
-        return cls(trajs)
-
-    def summary(self) -> Dict[str, Any]:
+    def mean_reward(self) -> float:
         if not self.trajectories:
-            return {"n": 0}
-        rewards = [t.total_reward for t in self.trajectories]
-        lengths = [len(t.steps) for t in self.trajectories]
-        success_rate = sum(1 for t in self.trajectories if t.success) / len(self.trajectories)
-        return {
-            "n": len(self.trajectories),
-            "success_rate": success_rate,
-            "mean_reward": sum(rewards) / len(rewards),
-            "mean_length": sum(lengths) / len(lengths),
-            "max_reward": max(rewards),
-            "min_reward": min(rewards),
-        }
+            return 0.0
+        return sum(t.total_reward for t in self.trajectories) / len(self.trajectories)
+
+    def save_all(self, directory: Path) -> None:
+        directory.mkdir(parents=True, exist_ok=True)
+        for t in self.trajectories:
+            t.save(directory / f"{t.episode_id}.json")

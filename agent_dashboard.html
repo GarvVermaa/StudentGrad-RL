@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>StudentGrad-RL — Agent Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; }
+  h1 { font-size: 1.4rem; font-weight: 700; color: #7dd3fc; }
+  h2 { font-size: 1rem; font-weight: 600; color: #94a3b8; margin-bottom: 8px; }
+  .header { padding: 16px 24px; border-bottom: 1px solid #1e293b; display:flex; align-items:center; gap:16px; }
+  .badge { font-size:.75rem; padding:3px 10px; border-radius:99px; background:#1e3a5f; color:#7dd3fc; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; padding: 16px 24px; }
+  .card { background: #1e293b; border-radius: 12px; padding: 16px; }
+  .card.wide { grid-column: span 3; }
+  .card.two { grid-column: span 2; }
+  .stat { font-size: 2rem; font-weight: 700; color: #7dd3fc; }
+  .stat-label { font-size: .8rem; color: #64748b; margin-top: 2px; }
+  .bar-row { display:flex; align-items:center; gap:8px; margin:4px 0; font-size:.85rem; }
+  .bar-track { flex:1; height:10px; background:#0f1117; border-radius:5px; overflow:hidden; }
+  .bar-fill { height:100%; border-radius:5px; transition: width .3s; }
+  .subject { width: 52px; color: #94a3b8; font-size:.8rem; }
+  .value-label { width: 42px; text-align:right; color:#cbd5e1; font-size:.8rem; }
+  canvas { width: 100% !important; }
+  .action-pill { display:inline-block; padding:2px 8px; border-radius:6px; font-size:.75rem; font-weight:600; }
+  .timeline { max-height:260px; overflow-y:auto; }
+  .trow { display:grid; grid-template-columns:40px 40px 140px 70px 1fr; gap:6px; padding:4px 0;
+          border-bottom:1px solid #0f1117; font-size:.78rem; align-items:center; }
+  .trow:hover { background:#263148; }
+  .thead { color:#64748b; font-size:.73rem; font-weight:600; border-bottom:2px solid #334155; }
+  .rpos { color:#4ade80; } .rneg { color:#f87171; }
+  .upload-zone { border:2px dashed #334155; border-radius:12px; padding:32px; text-align:center; cursor:pointer; }
+  .upload-zone:hover { border-color:#7dd3fc; }
+  #file-input { display:none; }
+  .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  select, button { background:#0f1117; color:#e2e8f0; border:1px solid #334155;
+                   padding:6px 12px; border-radius:6px; font-size:.85rem; cursor:pointer; }
+  button:hover { background:#1e3a5f; border-color:#7dd3fc; }
+  .scrubber { flex:1; min-width:200px; }
+  input[type=range] { width:100%; accent-color:#7dd3fc; }
+  .milestone { display:inline-flex; align-items:center; gap:4px; padding:3px 8px;
+               background:#14532d; color:#4ade80; border-radius:6px; font-size:.75rem; margin:2px; }
+  .empty { color:#475569; text-align:center; padding:24px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🎓 StudentGrad-RL — Agent Dashboard</h1>
+  <span class="badge" id="scenario-badge">no data</span>
+  <span class="badge" id="step-badge">step 0 / 0</span>
+  <span class="badge" id="score-badge">score —</span>
+</div>
+
+<div style="padding:16px 24px 0">
+  <div class="card">
+    <div class="controls">
+      <button onclick="document.getElementById('file-input').click()">📂 Load trajectory.json</button>
+      <input type="file" id="file-input" accept=".json" onchange="loadFile(event)">
+      <label style="font-size:.85rem;color:#94a3b8">Step:</label>
+      <input type="range" id="scrubber" class="scrubber" min="0" max="0" value="0"
+             oninput="renderStep(parseInt(this.value))">
+      <button onclick="playPause()">▶ Play</button>
+      <button onclick="stopPlay()">⏹ Stop</button>
+      <select id="speed-select">
+        <option value="400">0.5×</option>
+        <option value="200" selected>1×</option>
+        <option value="80">3×</option>
+        <option value="30">10×</option>
+      </select>
+      <span style="font-size:.8rem;color:#64748b">Or run <code style="color:#7dd3fc">uv run python watch_agent.py</code> then reload</span>
+    </div>
+  </div>
+</div>
+
+<div class="grid">
+
+  <!-- Stats row -->
+  <div class="card">
+    <h2>Day</h2>
+    <div class="stat" id="stat-day">—</div>
+    <div class="stat-label">of 365</div>
+  </div>
+  <div class="card">
+    <h2>Cumulative Reward</h2>
+    <div class="stat" id="stat-reward" style="color:#4ade80">—</div>
+    <div class="stat-label">score: <span id="stat-score">—</span></div>
+  </div>
+  <div class="card">
+    <h2>Last Action</h2>
+    <div class="stat" style="font-size:1.1rem;color:#f0abfc" id="stat-action">—</div>
+    <div class="stat-label" id="stat-just" style="margin-top:6px">—</div>
+  </div>
+
+  <!-- Energy & Fatigue -->
+  <div class="card">
+    <h2>Energy &amp; Fatigue</h2>
+    <div class="bar-row">
+      <span class="subject">Energy</span>
+      <div class="bar-track"><div class="bar-fill" id="bar-energy" style="background:#4ade80;width:100%"></div></div>
+      <span class="value-label" id="lbl-energy">10/10</span>
+    </div>
+    <div class="bar-row">
+      <span class="subject">Fatigue</span>
+      <div class="bar-track"><div class="bar-fill" id="bar-fatigue" style="background:#f87171;width:0%"></div></div>
+      <span class="value-label" id="lbl-fatigue">0/100</span>
+    </div>
+  </div>
+
+  <!-- Attendance -->
+  <div class="card">
+    <h2>Attendance (need ≥40%)</h2>
+    <div id="attendance-bars"></div>
+  </div>
+
+  <!-- Projects -->
+  <div class="card">
+    <h2>Projects &amp; Milestones</h2>
+    <div id="projects-display"></div>
+    <div style="margin-top:8px;font-size:.8rem;color:#94a3b8">
+      Active progress: <span id="active-progress">—</span>
+    </div>
+  </div>
+
+  <!-- Reward chart -->
+  <div class="card two">
+    <h2>Reward per Step</h2>
+    <canvas id="reward-chart" height="120"></canvas>
+  </div>
+
+  <!-- Knowledge -->
+  <div class="card">
+    <h2>Knowledge (0-100)</h2>
+    <div id="knowledge-bars"></div>
+  </div>
+
+  <!-- Skills -->
+  <div class="card">
+    <h2>Skills (0-30)</h2>
+    <div id="skill-bars"></div>
+  </div>
+
+  <!-- Cumulative reward chart -->
+  <div class="card two">
+    <h2>Cumulative Reward</h2>
+    <canvas id="cumulative-chart" height="120"></canvas>
+  </div>
+
+  <!-- Action heatmap -->
+  <div class="card">
+    <h2>Action Distribution</h2>
+    <canvas id="action-chart" height="180"></canvas>
+  </div>
+
+  <!-- Step timeline -->
+  <div class="card wide">
+    <h2>Step Timeline</h2>
+    <div class="trow thead">
+      <span>Step</span><span>Day</span><span>Action</span><span>Reward</span><span>Violations</span>
+    </div>
+    <div class="timeline" id="timeline"></div>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script>
+let trajectory = [];
+let currentStep = 0;
+let playInterval = null;
+let rewardChart = null, cumulativeChart = null, actionChart = null;
+
+const ACTION_COLORS = {
+  full_academic:    '#7dd3fc',
+  skill_deep_dive:  '#a78bfa',
+  project_sprint:   '#4ade80',
+  balanced_life:    '#fbbf24',
+  cram_mode:        '#f87171',
+  rest:             '#94a3b8',
+  submit_outcome:   '#f0abfc',
+};
+
+function loadFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      trajectory = JSON.parse(e.target.result);
+      init();
+    } catch(err) { alert('Invalid JSON: ' + err); }
+  };
+  reader.readAsText(file);
+}
+
+async function tryAutoLoad() {
+  try {
+    const r = await fetch('trajectory.json?t=' + Date.now());
+    if (r.ok) { trajectory = await r.json(); init(); }
+  } catch(e) {}
+}
+
+function init() {
+  if (!trajectory.length) return;
+  const scrubber = document.getElementById('scrubber');
+  scrubber.max = trajectory.length - 1;
+  scrubber.value = 0;
+  document.getElementById('scenario-badge').textContent = 'loaded';
+  document.getElementById('step-badge').textContent = `step 0 / ${trajectory.length}`;
+  buildCharts();
+  renderStep(0);
+}
+
+function buildCharts() {
+  const labels = trajectory.map(t => t.day);
+  const rewards = trajectory.map(t => t.reward);
+  const cumulative = trajectory.map(t => t.cumulative_reward);
+
+  // Action distribution pie
+  const actionCounts = {};
+  trajectory.forEach(t => { actionCounts[t.action] = (actionCounts[t.action]||0)+1; });
+
+  if (rewardChart) rewardChart.destroy();
+  if (cumulativeChart) cumulativeChart.destroy();
+  if (actionChart) actionChart.destroy();
+
+  const chartDefaults = { responsive:true, animation:{duration:0},
+    plugins:{legend:{display:false}},
+    scales:{ x:{display:false, grid:{color:'#1e293b'}},
+             y:{grid:{color:'#1e293b'}, ticks:{color:'#64748b'}} } };
+
+  rewardChart = new Chart(document.getElementById('reward-chart'), {
+    type: 'bar',
+    data: { labels,
+      datasets:[{ data: rewards,
+        backgroundColor: rewards.map(r => r >= 0 ? '#4ade8088':'#f8717188'),
+        borderColor:     rewards.map(r => r >= 0 ? '#4ade80':'#f87171'),
+        borderWidth:1 }] },
+    options: { ...chartDefaults, plugins:{...chartDefaults.plugins,
+      tooltip:{callbacks:{label: c => `reward: ${c.raw.toFixed(4)}`}}} }
+  });
+
+  cumulativeChart = new Chart(document.getElementById('cumulative-chart'), {
+    type: 'line',
+    data: { labels,
+      datasets:[{ data: cumulative, borderColor:'#7dd3fc',
+        backgroundColor:'#7dd3fc22', fill:true, tension:.3, pointRadius:0 }] },
+    options: chartDefaults
+  });
+
+  actionChart = new Chart(document.getElementById('action-chart'), {
+    type: 'doughnut',
+    data: {
+      labels: Object.keys(actionCounts),
+      datasets:[{ data: Object.values(actionCounts),
+        backgroundColor: Object.keys(actionCounts).map(a => ACTION_COLORS[a] || '#475569') }]
+    },
+    options: { responsive:true, animation:{duration:0},
+      plugins:{ legend:{ position:'right', labels:{ color:'#94a3b8', font:{size:11} } } } }
+  });
+}
+
+function renderStep(idx) {
+  if (!trajectory.length) return;
+  idx = Math.max(0, Math.min(idx, trajectory.length-1));
+  currentStep = idx;
+  document.getElementById('scrubber').value = idx;
+
+  const t = trajectory[idx];
+  document.getElementById('step-badge').textContent = `step ${idx+1} / ${trajectory.length}`;
+  document.getElementById('stat-day').textContent = t.day;
+  document.getElementById('stat-reward').textContent = t.cumulative_reward.toFixed(3);
+  document.getElementById('stat-score').textContent = Math.min(1, Math.max(0, t.cumulative_reward/15)).toFixed(4);
+  document.getElementById('score-badge').textContent = `score ${Math.min(1, Math.max(0, t.cumulative_reward/15)).toFixed(3)}`;
+
+  const acolor = ACTION_COLORS[t.action] || '#e2e8f0';
+  document.getElementById('stat-action').innerHTML =
+    `<span style="color:${acolor}">${t.action}</span>`;
+  const stepData = trajectory[idx];
+  document.getElementById('stat-just').textContent = '';
+
+  // Energy / Fatigue
+  document.getElementById('bar-energy').style.width = (t.energy/10*100)+'%';
+  document.getElementById('lbl-energy').textContent = t.energy.toFixed(1)+'/10';
+  const fPct = t.fatigue;
+  const fColor = fPct>=70?'#f87171':fPct>=40?'#fbbf24':'#4ade80';
+  document.getElementById('bar-fatigue').style.width = fPct+'%';
+  document.getElementById('bar-fatigue').style.background = fColor;
+  document.getElementById('lbl-fatigue').textContent = fPct.toFixed(0)+'/100';
+
+  // Attendance
+  const attEl = document.getElementById('attendance-bars');
+  attEl.innerHTML = '';
+  for (const [subj, pct] of Object.entries(t.attendance)) {
+    const color = pct>=0.75?'#4ade80':pct>=0.40?'#fbbf24':'#f87171';
+    attEl.innerHTML += `<div class="bar-row">
+      <span class="subject">${subj}</span>
+      <div class="bar-track"><div class="bar-fill" style="background:${color};width:${pct*100}%"></div></div>
+      <span class="value-label">${(pct*100).toFixed(0)}%</span>
+    </div>`;
+  }
+
+  // Knowledge
+  const knowEl = document.getElementById('knowledge-bars');
+  knowEl.innerHTML = '';
+  for (const [subj, val] of Object.entries(t.knowledge)) {
+    const color = val>=60?'#4ade80':val>=40?'#fbbf24':'#f87171';
+    knowEl.innerHTML += `<div class="bar-row">
+      <span class="subject">${subj}</span>
+      <div class="bar-track"><div class="bar-fill" style="background:${color};width:${val}%"></div></div>
+      <span class="value-label">${val.toFixed(0)}</span>
+    </div>`;
+  }
+
+  // Skills
+  const skillEl = document.getElementById('skill-bars');
+  skillEl.innerHTML = '';
+  for (const [skill, pts] of Object.entries(t.skills)) {
+    const color = pts>=10?'#a78bfa':pts>=5?'#fbbf24':'#475569';
+    skillEl.innerHTML += `<div class="bar-row">
+      <span class="subject">${skill}</span>
+      <div class="bar-track"><div class="bar-fill" style="background:${color};width:${pts/30*100}%"></div></div>
+      <span class="value-label">${pts.toFixed(1)}</span>
+    </div>`;
+  }
+
+  // Projects
+  const projEl = document.getElementById('projects-display');
+  if (t.projects.length) {
+    projEl.innerHTML = t.projects.map(p =>
+      `<span class="milestone">✅ ${p}</span>`).join('');
+  } else {
+    projEl.innerHTML = '<span style="color:#475569;font-size:.8rem">No projects yet</span>';
+  }
+
+  // Timeline — show window around current step
+  const tl = document.getElementById('timeline');
+  const start = Math.max(0, idx-20);
+  const end = Math.min(trajectory.length, idx+5);
+  tl.innerHTML = trajectory.slice(start, end).map((row, i) => {
+    const si = start + i;
+    const isActive = si === idx;
+    const bg = isActive ? 'background:#1e3a5f;border-radius:6px;' : '';
+    const rcolor = row.reward >= 0 ? 'rpos' : 'rneg';
+    const acolor = ACTION_COLORS[row.action] || '#e2e8f0';
+    const viol = row.violations.length ? `<span style="color:#f87171">${row.violations[0].slice(0,40)}</span>` : '';
+    return `<div class="trow" style="${bg}" onclick="renderStep(${si})">
+      <span>${si+1}</span>
+      <span>${row.day}</span>
+      <span><span class="action-pill" style="background:${acolor}22;color:${acolor}">${row.action.replace('_',' ')}</span></span>
+      <span class="${rcolor}">${row.reward>=0?'+':''}${row.reward.toFixed(3)}</span>
+      <span>${viol}</span>
+    </div>`;
+  }).join('');
+
+  // Scroll active row into view
+  tl.scrollTop = Math.max(0, (idx - start - 10) * 28);
+}
+
+function playPause() {
+  if (playInterval) { stopPlay(); return; }
+  const speed = parseInt(document.getElementById('speed-select').value);
+  playInterval = setInterval(() => {
+    if (currentStep >= trajectory.length - 1) { stopPlay(); return; }
+    renderStep(currentStep + 1);
+  }, speed);
+}
+
+function stopPlay() {
+  clearInterval(playInterval);
+  playInterval = null;
+}
+
+// Try to auto-load trajectory.json from same directory
+tryAutoLoad();
+</script>
+</body>
+</html>

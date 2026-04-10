@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from openenv.core.env_server.types import Action, Observation
 
@@ -114,12 +114,6 @@ class StudentTaskSpec(BaseModel):
 
 # ── Action model ─────────────────────────────────────────────────────────
 
-# 1. Update your imports at the top
-from pydantic import BaseModel, Field, field_validator # Add field_validator here
-
-# ... (keep everything else the same until you reach StudentAction) ...
-
-# ── Action model ─────────────────────────────────────────────────────────
 
 class StudentAction(Action):
     """One daily routine chosen by the agent."""
@@ -131,11 +125,10 @@ class StudentAction(Action):
     justification: Optional[str] = None
     confidence: float = Field(0.5, ge=0.0, le=1.0)
 
-    # ADD THIS VALIDATOR BLOCK HERE:
     @field_validator("action_type", mode="before")
     @classmethod
     def to_lowercase(cls, v: Any) -> Any:
-        """Ensures 'REST' or 'Rest' becomes 'rest' to match the ActionType Enum."""
+        """Normalise 'REST' or 'Rest' to 'rest' to match the ActionType Enum."""
         if isinstance(v, str):
             return v.lower()
         return v

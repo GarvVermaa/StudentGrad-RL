@@ -73,8 +73,10 @@ class StudentEnvironment(Environment):
         return self._build_observation(reward=0.0, done=False)
 
     def step(self, action: StudentAction) -> StudentObservation:
-        assert self._latent is not None, "Call reset() before step()"
-        assert self._task is not None
+        # Auto-reset if called without prior reset (openenv-core creates a fresh
+        # instance per request when not using a singleton factory).
+        if self._latent is None or self._task is None:
+            self.reset()
 
         self._state.step_count += 1
         prev_state = self._latent.model_copy(deep=True)

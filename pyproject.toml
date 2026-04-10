@@ -1,17 +1,11 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 [build-system]
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "openenv-bio-experiment"
+name = "student-grad-rl"
 version = "0.1.0"
-description = "RL environment for biological experiment pipeline planning"
+description = "RL environment for Student Career Optimisation — Meta/Scaler Hackathon"
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "openenv-core[core]>=0.2.0",
@@ -21,11 +15,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-bio = [
-    "biopython>=1.84",
-    "gseapy>=1.1.3",
-    "scanpy>=1.10.0",
-]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.0.0",
@@ -38,13 +27,15 @@ train = [
     "matplotlib>=3.10.8",
     "peft>=0.15.0",
     "torch>=2.10.0",
-    "torchvision>=0.20.0",  # required by transformers for Qwen3.5 (image_utils)
-    "transformers>=5.3.0",  # 5.3+ required for Qwen3.5 (qwen3_5 model type)
-    "trl>=0.29.0",  # GRPOTrainer; 0.29+ compatible with transformers 5.3
+    "torchvision>=0.20.0",
+    "transformers>=5.3.0",
+    "trl>=0.29.0",
 ]
 
+# ── Entry points — validator checks BOTH of these ──────────────────────────
 [project.scripts]
-server = "hackathon.server.app:main"
+server = "server.app:main"
+inference = "inference:main"
 
 [tool.uv]
 package = false
@@ -52,23 +43,12 @@ package = false
 [tool.setuptools]
 include-package-data = true
 packages = [
-    "hackathon",
-    "hackathon.server",
-    "hackathon.server.simulator",
-    "hackathon.server.rules",
-    "hackathon.server.rewards",
-    "hackathon.server.tasks",
-    "hackathon.server.subagents",
-    "hackathon.training",
-    "hackathon.tests",
+    "server",
+    "server.simulator",
+    "server.rules",
+    "server.rewards",
+    "server.tasks",
+    "server.subagents",
+    "training",
+    "tests",
 ]
-[tool.setuptools.package-dir]
-hackathon = "."
-"hackathon.server" = "server"
-"hackathon.server.simulator" = "server/simulator"
-"hackathon.server.rules" = "server/rules"
-"hackathon.server.rewards" = "server/rewards"
-"hackathon.server.tasks" = "server/tasks"
-"hackathon.server.subagents" = "server/subagents"
-"hackathon.training" = "training"
-"hackathon.tests" = "tests"

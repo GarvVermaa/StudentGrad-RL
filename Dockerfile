@@ -1,3 +1,12 @@
+# ── StudentGrad-RL  ──────────────────────────────────────────────────────────
+# Root Dockerfile: builds and runs the OpenEnv FastAPI server.
+# Used by: openenv validate, HF Space deployment, the pre-submission validator.
+#
+# The server/Dockerfile is the multi-stage version used by `openenv build`.
+# This root Dockerfile is the simple, self-contained version for local builds
+# and the HF Space /reset ping check.
+# ─────────────────────────────────────────────────────────────────────────────
+
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -7,36 +16,29 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends git curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Install uv for fast dependency resolution
+# Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     mv /root/.local/bin/uv /usr/local/bin/uv && \
     mv /root/.local/bin/uvx /usr/local/bin/uvx
 
-# Copy dependency files first for layer caching
+# Layer-cache deps before copying source
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies (including train extras for GRPO training)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-editable --extra train
+    uv sync --frozen --no-install-project --no-editable
 
-# Copy application code
+# Copy source
 COPY . .
 
-# Install project
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-editable --extra train
+    uv sync --frozen --no-editable
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app:$PYTHONPATH"
+ENV PORT=8000
 
-# Training output directory
-ENV OUTPUT_DIR="/app/training/grpo-output"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:${PORT}/health || exit 1
 
-# Default: run GRPO training. Override CMD for other modes.
-CMD ["python", "training_script.py", \
-     "--model-id", "Qwen/Qwen3.5-0.8B", \
-     "--output-dir", "/app/training/grpo-output", \
-     "--dataset-episodes", "8", \
-     "--rollout-steps", "6", \
-     "--num-generations", "4", \
-     "--trust-remote-code"]
+# Run the OpenEnv FastAPI server
+CMD ["sh", "-c", "cd /app && uvicorn server.app:app --host 0.0.0.0 --port ${PORT}"]

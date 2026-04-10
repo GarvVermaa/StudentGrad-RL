@@ -3,4 +3,6 @@ name: student-optimizer
 type: space
 runtime: fastapi
 app: server.app:app
+main: server.app:main
 port: 8000
+inference: inference:main

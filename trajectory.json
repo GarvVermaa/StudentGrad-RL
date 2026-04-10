@@ -1,0 +1,962 @@
+[
+  {
+    "step": 1,
+    "day": 1,
+    "action": "full_academic",
+    "reward": 1.8453606339275546,
+    "cumulative_reward": 1.8454,
+    "fatigue": 5.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 1.0,
+      "coa": 0.99
+    },
+    "knowledge": {
+      "dsa": 13.4,
+      "dbms": 12.5,
+      "os": 12.7,
+      "maths": 12.3,
+      "coa": 13.1
+    },
+    "skills": {
+      "js": 0.56,
+      "node": 0.57,
+      "docker": 0.59,
+      "html": 0.07,
+      "css": 0.06
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 2,
+    "day": 2,
+    "action": "full_academic",
+    "reward": 1.4945049177257672,
+    "cumulative_reward": 3.3399,
+    "fatigue": 10.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 0.99,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 16.2,
+      "dbms": 14.6,
+      "os": 14.9,
+      "maths": 14.1,
+      "coa": 15.6
+    },
+    "skills": {
+      "js": 1.06,
+      "node": 1.06,
+      "docker": 1.06,
+      "html": 0.05,
+      "css": 0.06
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 3,
+    "day": 3,
+    "action": "full_academic",
+    "reward": 1.4894625071870256,
+    "cumulative_reward": 4.8293,
+    "fatigue": 15.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 0.996,
+      "maths": 1.0,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 19.1,
+      "dbms": 16.6,
+      "os": 17.1,
+      "maths": 15.9,
+      "coa": 18.2
+    },
+    "skills": {
+      "js": 1.51,
+      "node": 1.57,
+      "docker": 1.57,
+      "html": 0.08,
+      "css": 0.05
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 4,
+    "day": 4,
+    "action": "full_academic",
+    "reward": 1.4950428152580315,
+    "cumulative_reward": 6.3244,
+    "fatigue": 20.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 0.996,
+      "maths": 1.0,
+      "coa": 0.99
+    },
+    "knowledge": {
+      "dsa": 21.9,
+      "dbms": 18.7,
+      "os": 18.9,
+      "maths": 17.7,
+      "coa": 20.8
+    },
+    "skills": {
+      "js": 2.07,
+      "node": 2.05,
+      "docker": 2.03,
+      "html": 0.07,
+      "css": 0.07
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 5,
+    "day": 5,
+    "action": "full_academic",
+    "reward": 1.4784475315984533,
+    "cumulative_reward": 7.8028,
+    "fatigue": 25.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 0.99,
+      "dbms": 0.99,
+      "os": 1.0,
+      "maths": 0.99,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 24.8,
+      "dbms": 20.7,
+      "os": 21.0,
+      "maths": 19.5,
+      "coa": 23.3
+    },
+    "skills": {
+      "js": 2.53,
+      "node": 2.54,
+      "docker": 2.56,
+      "html": 0.06,
+      "css": 0.04
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 6,
+    "day": 6,
+    "action": "full_academic",
+    "reward": 1.4765298197331136,
+    "cumulative_reward": 9.2793,
+    "fatigue": 30.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 0.99,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 1.0,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 27.6,
+      "dbms": 22.7,
+      "os": 23.3,
+      "maths": 20.9,
+      "coa": 25.9
+    },
+    "skills": {
+      "js": 3.03,
+      "node": 3.05,
+      "docker": 3.06,
+      "html": 0.04,
+      "css": 0.03
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 7,
+    "day": 7,
+    "action": "full_academic",
+    "reward": 1.502037515244396,
+    "cumulative_reward": 10.7814,
+    "fatigue": 35.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 1.0,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 30.5,
+      "dbms": 24.8,
+      "os": 25.5,
+      "maths": 22.7,
+      "coa": 28.5
+    },
+    "skills": {
+      "js": 3.57,
+      "node": 3.54,
+      "docker": 3.54,
+      "html": 0.07,
+      "css": 0.04
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 8,
+    "day": 8,
+    "action": "full_academic",
+    "reward": 1.3727740905088626,
+    "cumulative_reward": 12.1542,
+    "fatigue": 40.0,
+    "energy": 5.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 1.0,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 33.3,
+      "dbms": 26.8,
+      "os": 27.7,
+      "maths": 24.5,
+      "coa": 31.1
+    },
+    "skills": {
+      "js": 4.03,
+      "node": 4.03,
+      "docker": 4.08,
+      "html": 0.01,
+      "css": 0.01
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 9,
+    "day": 9,
+    "action": "full_academic",
+    "reward": 1.36661989997989,
+    "cumulative_reward": 13.5208,
+    "fatigue": 45.0,
+    "energy": 5.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 1.0,
+      "coa": 0.991
+    },
+    "knowledge": {
+      "dsa": 35.6,
+      "dbms": 28.8,
+      "os": 29.9,
+      "maths": 26.3,
+      "coa": 33.7
+    },
+    "skills": {
+      "js": 4.55,
+      "node": 4.54,
+      "docker": 4.57,
+      "html": 0.04,
+      "css": 0.06
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 10,
+    "day": 10,
+    "action": "full_academic",
+    "reward": 1.5149453665769295,
+    "cumulative_reward": 15.0357,
+    "fatigue": 50.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 0.99,
+      "os": 1.0,
+      "maths": 0.99,
+      "coa": 0.995
+    },
+    "knowledge": {
+      "dsa": 38.5,
+      "dbms": 30.9,
+      "os": 32.1,
+      "maths": 28.1,
+      "coa": 36.2
+    },
+    "skills": {
+      "js": 5.08,
+      "node": 5.02,
+      "docker": 5.05,
+      "html": 0.03,
+      "css": 0.01
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 11,
+    "day": 11,
+    "action": "full_academic",
+    "reward": 1.477140549593429,
+    "cumulative_reward": 16.5129,
+    "fatigue": 55.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 0.998,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 1.0,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 41.3,
+      "dbms": 32.9,
+      "os": 34.3,
+      "maths": 29.9,
+      "coa": 38.3
+    },
+    "skills": {
+      "js": 5.55,
+      "node": 5.56,
+      "docker": 5.51,
+      "html": 0.08,
+      "css": 0.06
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 12,
+    "day": 12,
+    "action": "full_academic",
+    "reward": 1.481834289183097,
+    "cumulative_reward": 17.9947,
+    "fatigue": 60.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 0.991,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 1.0,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 44.2,
+      "dbms": 34.9,
+      "os": 36.5,
+      "maths": 31.7,
+      "coa": 40.9
+    },
+    "skills": {
+      "js": 6.06,
+      "node": 6.06,
+      "docker": 6.01,
+      "html": 0.06,
+      "css": 0.04
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 13,
+    "day": 13,
+    "action": "full_academic",
+    "reward": 1.4822970363817272,
+    "cumulative_reward": 19.477,
+    "fatigue": 65.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 0.998,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 1.0,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 47.0,
+      "dbms": 37.0,
+      "os": 38.7,
+      "maths": 33.5,
+      "coa": 43.4
+    },
+    "skills": {
+      "js": 6.53,
+      "node": 6.59,
+      "docker": 6.55,
+      "html": 0.0,
+      "css": 0.05
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 14,
+    "day": 14,
+    "action": "full_academic",
+    "reward": 1.4653078502641887,
+    "cumulative_reward": 20.9423,
+    "fatigue": 70.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 0.991,
+      "maths": 1.0,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 49.9,
+      "dbms": 39.0,
+      "os": 40.9,
+      "maths": 35.3,
+      "coa": 46.0
+    },
+    "skills": {
+      "js": 7.06,
+      "node": 7.03,
+      "docker": 7.03,
+      "html": 0.1,
+      "css": 0.02
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 15,
+    "day": 15,
+    "action": "rest",
+    "reward": 1.4058904109589043,
+    "cumulative_reward": 22.3482,
+    "fatigue": 50.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 0.996,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 0.99,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 49.9,
+      "dbms": 39.0,
+      "os": 40.8,
+      "maths": 35.3,
+      "coa": 46.0
+    },
+    "skills": {
+      "js": 7.05,
+      "node": 7.04,
+      "docker": 7.07,
+      "html": 0.0,
+      "css": 0.04
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 16,
+    "day": 16,
+    "action": "full_academic",
+    "reward": 1.5003268921501811,
+    "cumulative_reward": 23.8485,
+    "fatigue": 55.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 0.995,
+      "dbms": 0.999,
+      "os": 1.0,
+      "maths": 1.0,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 52.8,
+      "dbms": 41.1,
+      "os": 43.0,
+      "maths": 37.1,
+      "coa": 48.6
+    },
+    "skills": {
+      "js": 7.57,
+      "node": 7.55,
+      "docker": 7.55,
+      "html": 0.03,
+      "css": 0.07
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 17,
+    "day": 17,
+    "action": "full_academic",
+    "reward": 1.4699834402094176,
+    "cumulative_reward": 25.3185,
+    "fatigue": 60.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 0.99,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 1.0,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 55.6,
+      "dbms": 43.1,
+      "os": 45.2,
+      "maths": 38.9,
+      "coa": 51.2
+    },
+    "skills": {
+      "js": 8.05,
+      "node": 8.04,
+      "docker": 8.05,
+      "html": 0.03,
+      "css": 0.05
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 18,
+    "day": 18,
+    "action": "full_academic",
+    "reward": 1.4904139817446909,
+    "cumulative_reward": 26.8089,
+    "fatigue": 65.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 0.994,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 0.99,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 58.5,
+      "dbms": 45.2,
+      "os": 47.4,
+      "maths": 40.7,
+      "coa": 53.7
+    },
+    "skills": {
+      "js": 8.55,
+      "node": 8.51,
+      "docker": 8.53,
+      "html": 0.09,
+      "css": 0.06
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 19,
+    "day": 19,
+    "action": "full_academic",
+    "reward": 1.4737909488071907,
+    "cumulative_reward": 28.2827,
+    "fatigue": 70.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 0.99,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 61.3,
+      "dbms": 47.2,
+      "os": 49.6,
+      "maths": 42.5,
+      "coa": 56.3
+    },
+    "skills": {
+      "js": 9.04,
+      "node": 9.03,
+      "docker": 9.07,
+      "html": 0.03,
+      "css": 0.07
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 20,
+    "day": 20,
+    "action": "rest",
+    "reward": 1.4058904109589043,
+    "cumulative_reward": 29.6886,
+    "fatigue": 50.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 0.99,
+      "dbms": 0.99,
+      "os": 1.0,
+      "maths": 1.0,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 61.3,
+      "dbms": 47.2,
+      "os": 49.6,
+      "maths": 42.5,
+      "coa": 56.3
+    },
+    "skills": {
+      "js": 9.04,
+      "node": 9.06,
+      "docker": 9.03,
+      "html": 0.04,
+      "css": 0.07
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 21,
+    "day": 21,
+    "action": "full_academic",
+    "reward": 1.517668085711471,
+    "cumulative_reward": 31.2063,
+    "fatigue": 55.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 0.99,
+      "maths": 1.0,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 64.2,
+      "dbms": 49.2,
+      "os": 51.9,
+      "maths": 44.3,
+      "coa": 58.9
+    },
+    "skills": {
+      "js": 9.55,
+      "node": 9.51,
+      "docker": 9.51,
+      "html": 0.02,
+      "css": 0.06
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 22,
+    "day": 22,
+    "action": "full_academic",
+    "reward": 1.5877687679143277,
+    "cumulative_reward": 32.794,
+    "fatigue": 60.0,
+    "energy": 5.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 0.993,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 67.0,
+      "dbms": 51.3,
+      "os": 53.6,
+      "maths": 46.1,
+      "coa": 61.4
+    },
+    "skills": {
+      "js": 10.05,
+      "node": 10.03,
+      "docker": 10.05,
+      "html": 0.02,
+      "css": 0.05
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 23,
+    "day": 23,
+    "action": "full_academic",
+    "reward": 1.3766076427421479,
+    "cumulative_reward": 34.1706,
+    "fatigue": 65.0,
+    "energy": 5.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 0.99,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 69.9,
+      "dbms": 53.3,
+      "os": 55.8,
+      "maths": 47.8,
+      "coa": 64.0
+    },
+    "skills": {
+      "js": 10.54,
+      "node": 10.54,
+      "docker": 10.56,
+      "html": 0.06,
+      "css": 0.03
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 24,
+    "day": 24,
+    "action": "full_academic",
+    "reward": 1.4911366898037641,
+    "cumulative_reward": 35.6618,
+    "fatigue": 70.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 0.99,
+      "os": 0.993,
+      "maths": 0.99,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 72.7,
+      "dbms": 54.9,
+      "os": 57.6,
+      "maths": 49.6,
+      "coa": 66.6
+    },
+    "skills": {
+      "js": 11.01,
+      "node": 11.04,
+      "docker": 11.03,
+      "html": 0.05,
+      "css": 0.06
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 25,
+    "day": 25,
+    "action": "rest",
+    "reward": 1.4058904109589043,
+    "cumulative_reward": 37.0677,
+    "fatigue": 50.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 1.0,
+      "coa": 0.997
+    },
+    "knowledge": {
+      "dsa": 72.7,
+      "dbms": 54.9,
+      "os": 57.6,
+      "maths": 49.6,
+      "coa": 66.6
+    },
+    "skills": {
+      "js": 11.06,
+      "node": 11.06,
+      "docker": 11.04,
+      "html": 0.05,
+      "css": 0.03
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 26,
+    "day": 26,
+    "action": "full_academic",
+    "reward": 1.4786708198505258,
+    "cumulative_reward": 38.5463,
+    "fatigue": 55.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 1.0,
+      "coa": 0.993
+    },
+    "knowledge": {
+      "dsa": 75.6,
+      "dbms": 57.0,
+      "os": 59.8,
+      "maths": 51.4,
+      "coa": 69.2
+    },
+    "skills": {
+      "js": 11.53,
+      "node": 11.53,
+      "docker": 11.56,
+      "html": 0.07,
+      "css": 0.08
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 27,
+    "day": 27,
+    "action": "full_academic",
+    "reward": 1.4974443784846223,
+    "cumulative_reward": 40.0438,
+    "fatigue": 60.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 1.0,
+      "os": 0.998,
+      "maths": 1.0,
+      "coa": 0.996
+    },
+    "knowledge": {
+      "dsa": 78.4,
+      "dbms": 59.0,
+      "os": 62.0,
+      "maths": 53.2,
+      "coa": 71.8
+    },
+    "skills": {
+      "js": 12.04,
+      "node": 12.03,
+      "docker": 12.04,
+      "html": 0.09,
+      "css": 0.05
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 28,
+    "day": 28,
+    "action": "full_academic",
+    "reward": 1.4626880474834498,
+    "cumulative_reward": 41.5065,
+    "fatigue": 65.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 1.0,
+      "dbms": 0.99,
+      "os": 0.999,
+      "maths": 0.99,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 81.3,
+      "dbms": 60.6,
+      "os": 64.2,
+      "maths": 55.0,
+      "coa": 74.3
+    },
+    "skills": {
+      "js": 12.55,
+      "node": 12.56,
+      "docker": 12.57,
+      "html": 0.06,
+      "css": 0.03
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 29,
+    "day": 29,
+    "action": "full_academic",
+    "reward": 1.4834288547010168,
+    "cumulative_reward": 42.9899,
+    "fatigue": 70.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 0.99,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 0.99,
+      "coa": 0.99
+    },
+    "knowledge": {
+      "dsa": 84.1,
+      "dbms": 62.7,
+      "os": 66.4,
+      "maths": 56.8,
+      "coa": 76.9
+    },
+    "skills": {
+      "js": 13.08,
+      "node": 13.04,
+      "docker": 13.1,
+      "html": 0.07,
+      "css": 0.06
+    },
+    "projects": [],
+    "violations": []
+  },
+  {
+    "step": 30,
+    "day": 30,
+    "action": "rest",
+    "reward": 1.4058904109589043,
+    "cumulative_reward": 44.3958,
+    "fatigue": 50.0,
+    "energy": 10.0,
+    "attendance": {
+      "dsa": 0.99,
+      "dbms": 1.0,
+      "os": 1.0,
+      "maths": 0.99,
+      "coa": 1.0
+    },
+    "knowledge": {
+      "dsa": 84.2,
+      "dbms": 62.7,
+      "os": 66.4,
+      "maths": 56.8,
+      "coa": 76.9
+    },
+    "skills": {
+      "js": 13.05,
+      "node": 13.05,
+      "docker": 13.03,
+      "html": 0.04,
+      "css": 0.04
+    },
+    "projects": [],
+    "violations": []
+  }
+]
