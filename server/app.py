@@ -58,6 +58,22 @@ async def demo_ui() -> HTMLResponse:
     return HTMLResponse("<h1>StudentGrad API</h1><p>POST /reset then POST /step</p>")
 
 
+from fastapi import Request
+
+@app.post("/mcp")
+async def mcp_endpoint(request: Request):
+    """MCP JSON-RPC 2.0 endpoint required by openenv validator."""
+    body = await request.json()
+    return {
+        "jsonrpc": "2.0",
+        "id": body.get("id", 1),
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "serverInfo": {"name": "student-optimizer", "version": "1.0.0"},
+        },
+    }
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main() -> None:
     """Zero-argument entry point for the OpenEnv multi-mode validator."""
