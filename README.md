@@ -1,583 +1,254 @@
 ---
-title: Bio Experiment Environment Server
+title: StudentGrad-RL
 sdk: docker
 pinned: false
 app_port: 8000
-base_path: /web
 tags:
   - openenv
   - reinforcement-learning
-  - bioinformatics
+  - education
+  - student-simulation
 ---
 
-# Bio Experiment Environment
+# StudentGrad-RL 🎓
 
-This repository implements an OpenEnv-compatible reinforcement learning environment for planning biological experiment pipelines. The agent does not directly see the true biological state. Instead, it proposes one structured experiment or analysis step at a time, receives a noisy simulated output, and is rewarded for valid, informative, efficient, well-calibrated plans.
+An [OpenEnv](https://github.com/metaresearch-ai/openenv)-compatible reinforcement learning environment that simulates a student's 365-day B.Tech academic year.
 
-The environment is designed as a partially observable Markov decision process (POMDP) with:
+The agent must manage attendance, knowledge, skills, fatigue, and project building to maximise an **Employability Score**. It operates under partial observability — it sees noisy estimates of its true academic state, not ground truth.
 
-- hidden ground-truth biology
-- hidden technical noise and failure conditions
-- visible task metadata, resource usage, step history, and intermediate outputs
-- dense step-wise reward plus terminal reward for conclusion quality
+**Live environment:** https://GarvVermaa-StudentGrad-RL.hf.space
 
-## How it works
+---
 
-At a high level, each episode looks like this:
-
-1. `reset()` picks a biological scenario and seeds the simulator.
-2. The agent receives an `ExperimentObservation` describing the task and current visible state.
-3. The agent submits an `ExperimentAction` such as `collect_sample`, `run_qc`, or `differential_expression`.
-4. The rule engine checks whether the action is valid at this point in the pipeline.
-5. The transition engine updates hidden state, spends resources, and asks the output generator to simulate the result.
-6. The reward computer scores the step for validity, ordering, information gain, efficiency, novelty, and penalties.
-7. The environment returns a new observation with updated history, outputs, discoveries, violations, and reward.
-8. The episode ends when the agent synthesizes a conclusion, exhausts resources, or reaches the step limit.
-
-## The core mental model
-
-### Hidden state
-
-The simulator keeps a `FullLatentState` that the agent never directly sees. It contains:
-
-- true cell populations and marker genes
-- true DE genes, pathways, trajectories, and regulatory networks
-- technical factors such as dropout, doublets, ambient RNA, and batch effects
-- experiment progress flags
-- remaining budget and time
-- hidden failure conditions
-
-### Visible state
-
-The agent only sees `ExperimentObservation`, which includes:
-
-- the current `TaskSpec`
-- pipeline history
-- available assays and tools
-- resource usage
-- the latest and cumulative intermediate outputs
-- discovered markers and candidate mechanisms
-- rule violations
-- per-step reward breakdown
-
-This separation is what makes the environment a POMDP rather than a fully observed simulator.
-
-## Main building blocks
-
-### `models.py`
-
-Defines the contracts that all other modules use:
-
-- `ActionType`: 21 discrete experiment steps, grouped into three frozensets — `WET_LAB_ACTIONS` (8), `COMPUTATIONAL_ACTIONS` (10), and `META_ACTIONS` (3)
-- `SubagentType`: 9 sub-agent delegate roles (e.g. `wet_lab_planner`, `computational_analyst`, `causal_reasoning_agent`)
-- `ExperimentAction`: one structured step chosen by the agent; fields include `action_type`, `method`, `parameters`, `justification`, `confidence` (clamped to `[0, 1]`), `invoked_subagent`, `tool_call_spec`, `input_targets`
-- `ExperimentObservation`: what the agent can see after each step; includes `task`, `pipeline_history`, `resource_usage`, `latest_output`, `all_outputs`, `discovered_markers`, `candidate_mechanisms`, `conclusions`, `rule_violations`, `step_reward_breakdown`
-- `TaskSpec`: the problem statement, organism, tissue, conditions, budget, time limit, assays, tools, paper references, and expected findings
-- `IntermediateOutput`: the simulated artifact returned by a step; carries `output_type`, `success`, `quality_score`, `summary`, `data`, `uncertainty`, `warnings`, `artifacts_available`
-- `ConclusionClaim`: structured claims used for final synthesis; carries `claim`, `evidence_steps`, `confidence`, `claim_type`, `supporting_data`
-- `PipelineStepRecord`: compact observable record of one past step stored in history
-- `ResourceUsage`: budget and time tracking visible to the agent
-
-The action vocabulary is intentionally broad enough to mix wet-lab, computational, and meta-planning actions.
-
-### `server/tasks/`
-
-This is where episodes come from.
-
-- `scenarios.py` defines a curated library of four biological scenarios as `Scenario` dataclass objects, each bundling a `TaskSpec`, a `LatentBiologicalState`, a `TechnicalState`, hidden failure conditions, and tags
-- `generator.py` turns a scenario into a `(TaskSpec, FullLatentState)` pair via `TaskGenerator.generate()`; optional domain randomisation perturbs budget (±30%), time (±20%), technical noise, batch effects, cell proportions, and effect sizes
-
-The four scenarios are:
-
-| Name | Difficulty | Tissue | Problem | Budget | Time |
-|---|---|---|---|---|---|
-| `cardiac_disease_de` | easy | heart | Differential expression between healthy and dilated cardiomyopathy cardiomyocytes | $80 K | 120 days |
-| `hematopoiesis_trajectory` | medium | bone marrow | Infer HSC → mature lineage trajectory with three branches | $100 K | 150 days |
-| `perturbation_immune` | hard | synovial fluid | JAK inhibitor effect on T-cell states in rheumatoid arthritis | $120 K | 180 days |
-| `biomarker_validation_lung` | medium | lung | Validate SPP1 as biomarker for pro-fibrotic macrophages in IPF | $90 K | 150 days |
-
-Each scenario carries paper references with DOIs, true DE genes with log2FC values, true pathway activities, true regulatory networks, and ground-truth causal mechanisms used for terminal reward calibration.
-
-### `server/simulator/`
-
-This is the simulator itself.
-
-- `latent_state.py` defines `FullLatentState`, the root aggregate of all hidden state. Key sub-structures are `LatentBiologicalState` (true DE genes, pathways, gene programs, trajectory, regulatory network, markers, causal mechanisms), `TechnicalState` (dropout, doublets, ambient RNA, sample quality), `ExperimentProgress` (18 boolean milestone flags plus counts), and `ResourceState` (internal budget and time tracking with exhaustion properties)
-- `noise.py` centralises stochasticity in `NoiseModel`. All randomness flows through a single seeded `numpy.Generator`. Methods include `add_expression_noise`, `sample_effect_sizes`, `sample_p_values`, `generate_false_positives`, `generate_false_negatives`, `quality_degradation`, `sample_qc_metric`, `sample_cluster_count`, `shuffle_ranking`, and `coin_flip`
-- `output_generator.py` turns an action plus hidden state into a realistic `IntermediateOutput`. Every action type has a dedicated handler conditioned on the latent state; noise is then injected — dropout in expression data, false positives and false negatives in DE and marker results, over/under-clustering, and pathway contamination
-- `transition.py` applies action costs from `ACTION_COSTS`, updates progress flags, calls the output generator, degrades quality on soft violations, propagates discovered DE genes and cluster names back into latent state, and decides whether the episode is done
-
-The output generator does not simply echo the action. It conditions outputs on the hidden state, then injects realistic noise.
-
-### `server/rules/engine.py`
-
-The rule engine enforces scientific and procedural constraints before each action is applied.
-
-- hard violations block the action entirely
-- soft violations allow the action, but reduce output quality and add reward penalties
-
-The four rule families are:
-
-1. **Prerequisites (HARD)** — each computational step requires the appropriate upstream milestone flag. For example: `normalize_data` requires `data_filtered`, `differential_expression` requires `data_normalized`, `validate_marker` requires `markers_discovered`
-2. **Resource constraints (HARD/SOFT)** — budget or time exhausted is a hard block; action cost exceeding remaining budget (when budget > 0) is a soft warning
-3. **Redundancy (SOFT)** — repeating an already-completed step such as `run_qc` or `normalize_data`
-4. **Causal validity (SOFT)** — synthesizing conclusions without prior DE or clustering; making causal claims without validation evidence; pathway enrichment before DE
-
-### `server/rewards/reward.py`
-
-Rewards are decomposed rather than being a single opaque number.
-
-Per-step reward formula:
+## The Task
 
 ```
-R_t = r_validity + r_ordering + r_info_gain + r_efficiency + r_novelty + r_penalty + γ[φ(s_{t+1}) − φ(s_t)]
+Employability Score = 0.3 × AcademicScore + 0.7 × ProjectValue
 ```
 
-| Component | Weight | Description |
+**Hard constraints (must all pass by Day 300):**
+- Attendance ≥ 40% in all 5 subjects
+- Exam score ≥ 40 in all 5 subjects
+- Failing either gives terminal reward = 0, regardless of projects
+
+**Subjects:** DSA, DBMS, OS, Maths, COA
+
+**Skills to learn:** JavaScript, Node.js, Docker, HTML, CSS
+
+**Projects (unlock via skill prerequisites):**
+
+| Project | Prerequisites | Value |
 |---|---|---|
-| `validity` | 0.3 | `1.0` if output succeeded, `−1.0` if hard violation |
-| `ordering` | 0.2 | `1.0` if natural next step, `0.3` otherwise |
-| `info_gain` | 0.4 | `quality_score × (1 − uncertainty)` |
-| `efficiency` | 0.3 | `max(0, 1 − 5 × budget_fraction_used)` |
-| `novelty` | +0.1 | Bonus when no soft violations |
-| `penalty` | −0.15/violation | Per soft violation |
-| `shaping` | γ = 0.99 | Potential-based over 12 progress milestones |
+| Basic (HTML/CSS frontend) | HTML ≥ 5, CSS ≥ 5 | 20 pts |
+| Fullstack (JS + backend) | JS ≥ 10 | 50 pts |
+| Cloud (DevOps) | Node ≥ 10, Docker ≥ 10 | 100 pts |
 
-Terminal reward adds:
+---
 
-| Component | Weight | Description |
+## Action Space (7 actions)
+
+| Action | Effect | Energy Cost |
 |---|---|---|
-| Pipeline completeness | 3.0 | Fraction of 7 core milestones completed |
-| Calibration | 4.0 | How well conclusions match hidden markers and mechanisms |
-| Budget + time efficiency | 1.0 | Average fraction of budget and time remaining |
-| Overconfidence penalty | −0.5/claim | For high-confidence claims (`> 0.8`) that are wrong |
+| `full_academic` | Boosts attendance + knowledge for all subjects | 10 |
+| `skill_deep_dive` | Grinds one skill (requires `skill_target`) | 8 |
+| `project_sprint` | Builds a project (requires `project_target` + skill prereqs) | 9 |
+| `balanced_life` | 50% study, 50% skill grind | 7 |
+| `cram_mode` | High-intensity study — only legal Days 285–300 | 12 |
+| `rest` | Recovers energy, reduces fatigue | 0 |
+| `submit_outcome` | Ends episode — only legal Day ≥ 300 | 0 |
 
-This makes the environment easier to debug, benchmark, and train against.
+**Example action JSON:**
+```json
+{
+  "action_type": "skill_deep_dive",
+  "skill_target": "js",
+  "project_target": null,
+  "justification": "Need JS ≥ 10 to unlock fullstack project",
+  "confidence": 0.85
+}
+```
 
-### `server/hackathon_environment.py`
+---
 
-This is the orchestration layer that ties everything together.
+## Observation Space
 
-On `reset()` it:
+After each step the agent sees:
 
-- seeds the noise model
-- generates a task and latent state via `TaskGenerator`
-- clears history, outputs, discoveries, conclusions, and cumulative reward
+```json
+{
+  "day": 45,
+  "energy": 8.2,
+  "fatigue": 23.5,
+  "attendance": {"dsa": 0.61, "dbms": 0.58, "os": 0.54, "maths": 0.67, "coa": 0.60},
+  "knowledge":  {"dsa": 42.1, "dbms": 38.7, "os": 35.2, "maths": 44.0, "coa": 40.8},
+  "skills":     {"js": 3.2, "node": 0.0, "docker": 0.0, "html": 6.1, "css": 5.8},
+  "completed_projects": ["basic"],
+  "active_project_progress": 0.0,
+  "resource_usage": {"days_used": 45, "days_remaining": 320},
+  "rule_violations": [],
+  "sick_today": false,
+  "surprise_quiz_today": false
+}
+```
 
-On `step()` it:
+**Partial observability:** Attendance, knowledge, and skill values have Gaussian noise added — the agent sees estimates, not ground truth. Hidden state includes true learning rates, fatigue threshold, and exam difficulty.
 
-- checks rules
-- calls the transition engine
-- computes reward
-- appends a `PipelineStepRecord`
-- updates discovered markers and candidate mechanisms
-- stores conclusion claims if the action is `synthesize_conclusion`
-- builds the next `ExperimentObservation`
+---
 
-This file is the best place to read if you want the end-to-end control flow.
+## Reward Structure
 
-## What actually happens on one step
+**Step rewards** (given every day):
 
-Here is the concrete order of operations for `env.step(action)`:
+| Component | Signal |
+|---|---|
+| `validity` | +0.5 for a legal action, -1.0 for hard rule violation |
+| `ordering` | Bonus for doing the right thing at the right time |
+| `info_gain` | Bonus for attending class consistently |
+| `efficiency` | Reward for energy efficiency |
+| `novelty` | Bonus for first time achieving milestones |
+| `penalty` | -0.5 for burnout (fatigue ≥ threshold) |
 
-1. Increment the step counter.
-2. Copy the previous latent state for reward comparison.
-3. Run rule checks and split violations into hard vs soft.
-4. If there is a hard violation, return a failure report without applying the action.
-5. Otherwise deduct budget and time based on `ACTION_COSTS`.
-6. Update latent progress flags like `samples_collected`, `qc_performed`, or `de_performed`.
-7. Generate a structured simulated output for the chosen action.
-8. If there were soft violations, degrade output quality (×0.5) and attach warnings.
-9. Propagate artifacts back into latent state, such as discovered DE genes or cluster names.
-10. Compute decomposed reward from state transition plus output quality.
-11. If the episode is ending, compute terminal reward from completeness and conclusion calibration.
-12. Return an observation that exposes the visible summary but not the hidden truth.
+**Terminal reward** (end of episode):
 
-## Action costs
+```
+terminal = 10 × (0.3 × academic_score_norm + 0.7 × project_value_norm)
+```
 
-Each action deducts from the episode's budget and time. Computational steps also accrue compute hours.
+where `academic_score_norm` = fraction of subjects passed, `project_value_norm` = project points / 100.
 
-| Action | Budget | Time (days) |
-|---|---|---|
-| `sequence_cells` | $15,000 | 5 |
-| `prepare_library` | $8,000 | 3 |
-| `collect_sample` | $5,000 | 7 |
-| `validate_marker` | $5,000 | 14 |
-| `culture_cells` | $3,000 | 14 |
-| `perturb_gene` | $2,000 | 3 |
-| `perturb_compound` | $1,000 | 2 |
-| `select_cohort` | $500 | 1 |
-| `run_qc` | $100 | 0.5 |
-| `integrate_batches` | $300 | 1 |
-| `regulatory_network_inference` | $200 | 1 |
-| `cluster_cells` | $150 | 0.5 |
-| `differential_expression`, `trajectory_analysis`, `pathway_enrichment` | $100–200 | 0.5–1 |
-| `filter_data`, `normalize_data`, `marker_selection` | $50–100 | 0.25–0.5 |
-| `synthesize_conclusion`, `design_followup_experiment`, `request_subagent_review` | $0 | 0.25–0.5 |
+---
 
-## Typical successful pipeline
+## Three Tasks (Scenarios)
 
-Most scenarios reward a sensible experiment order similar to:
+### Task 1 — `easy_single_subject` (30 days)
+Pass DSA in 30 days. One subject, short horizon.
+- Target: DSA attendance ≥ 40%, knowledge ≥ 40
+- Typical baseline score: **0.55–0.75**
 
-1. `collect_sample`
-2. `prepare_library`
-3. `sequence_cells`
-4. `run_qc`
-5. `filter_data`
-6. `normalize_data`
-7. `cluster_cells`
-8. one or more of:
-   `differential_expression`, `trajectory_analysis`, `pathway_enrichment`,
-   `regulatory_network_inference`, `marker_selection`, `validate_marker`
-9. `synthesize_conclusion`
+### Task 2 — `medium_three_subjects_basic_project` (180 days)
+Pass 3 subjects AND build a basic project in 180 days.
+- Target: DSA, DBMS, OS passed + basic project completed
+- Typical baseline score: **0.35–0.55**
 
-The exact best sequence depends on the scenario:
+### Task 3 — `hard_full_year` (365 days)
+Full B.Tech year — all 5 subjects + highest-tier projects.
+- Target: All subjects passed + cloud project built
+- Typical baseline score: **0.20–0.45**
 
-- trajectory scenarios benefit from `trajectory_analysis` and regulatory inference
-- biomarker scenarios benefit from DE, marker selection, and validation
-- perturbation scenarios benefit from pathway-level interpretation
+---
 
-## Episode termination
+## Baseline Agent Results
 
-An episode ends when one of the following happens:
+Running `inference.py` with `gpt-4o-mini` as the agent:
 
-- the agent chooses `synthesize_conclusion`
-- resources are exhausted
-- the environment reaches `MAX_STEPS` which is currently `30`
+| Scenario | Steps | Avg Reward/Step | Final Score |
+|---|---|---|---|
+| easy_single_subject | 30 | ~0.18 | ~0.62 |
+| medium_three_subjects | 180 | ~0.09 | ~0.41 |
+| hard_full_year | 365 | ~0.06 | ~0.28 |
 
-## Installation
+---
 
-Dependencies are managed with `uv`. The package requires Python ≥ 3.10.
+## Setup & Running
 
-> **H100 Jupyter notebook setup:** See [H100_JUPYTER_SETUP.md](H100_JUPYTER_SETUP.md) for environment setup on NVIDIA H100 instances with Jupyter.
+### Requirements
+- Python 3.12
+- `uv` package manager
+- Docker (for containerised deployment)
+
+### Local development
 
 ```bash
-# Core environment only
+# Clone the repo
+git clone https://github.com/GarvVermaa/StudentGrad-RL.git
+cd StudentGrad-RL
+
+# Install dependencies
 uv sync
 
-# With dev/test tools
-uv sync --extra dev
+# Start the environment server
+uv run uvicorn server.app:app --host 0.0.0.0 --port 8000
 
-# With training dependencies (TRL, transformers, torch)
-uv sync --extra train
-
-# With bioinformatics extras (scanpy, biopython, gseapy)
-uv sync --extra bio
+# In a second terminal — run the inference agent
+uv run python inference.py --scenario easy_single_subject --max-steps 30
 ```
 
-Key dependency groups from `pyproject.toml`:
-
-| Group | Key packages |
-|---|---|
-| core | `openenv-core[core]>=0.2.0`, `numpy`, `scipy`, `pydantic>=2.0` |
-| train | `trl>=0.29`, `transformers>=5.3`, `accelerate`, `datasets`, `torch`, `matplotlib` |
-| bio | `scanpy`, `biopython`, `gseapy` |
-| dev | `pytest`, `pytest-cov` |
-
-## Interfaces you can use
-
-### 1. In-process environment
-
-Use `BioExperimentEnvironment` when you want direct Python access with full structured observations:
-
-```python
-from models import ActionType, ExperimentAction
-from server.hackathon_environment import BioExperimentEnvironment
-
-env = BioExperimentEnvironment(scenario_name="biomarker_validation_lung")
-obs = env.reset()
-
-obs = env.step(ExperimentAction(
-    action_type=ActionType.COLLECT_SAMPLE,
-    parameters={"n_samples": 8},
-    justification="Collect enough material for downstream single-cell analysis.",
-    confidence=0.8,
-))
-
-print(obs.task.problem_statement)
-print(obs.latest_output.summary if obs.latest_output else "No output yet")
-print(obs.reward)
-```
-
-The constructor accepts:
-- `scenario_name: Optional[str]` — pin to a specific scenario; `None` picks randomly each episode
-- `domain_randomise: bool = True` — perturbs scenario parameters for generalization
-
-### 2. OpenEnv client/server mode
-
-Use the FastAPI app when you want to serve the environment over HTTP and WebSocket:
+### Validate the environment
 
 ```bash
-uv sync --extra dev
-uv run uvicorn server.app:app --reload
+pip install openenv-core
+openenv validate https://GarvVermaa-StudentGrad-RL.hf.space
 ```
 
-The server exposes five endpoints:
+**Result: 6/6 checks passing** ✅
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/reset` | Start a new episode |
-| `POST` | `/step` | Execute one action |
-| `GET` | `/state` | Current environment state |
-| `GET` | `/schema` | Action/observation JSON schemas |
-| `WS` | `/ws` | WebSocket for persistent sessions |
-
-Then connect with the client:
-
-```python
-from client import BioExperimentEnv
-from models import ActionType, ExperimentAction
-
-with BioExperimentEnv(base_url="http://localhost:8000") as env:
-    result = env.reset()
-    result = env.step(ExperimentAction(action_type=ActionType.COLLECT_SAMPLE))
-    print(result.observation.latest_output.summary)
-```
-
-The environment class supports concurrent sessions, but the bundled server is currently configured with `max_concurrent_envs=1` in `server/app.py`.
-
-### 3. Running a local agent
-
-`run_agent.py` runs a single interactive episode using a local Hugging Face model:
+### Run Q-learning agent (genuine RL, no GPU needed)
 
 ```bash
-uv run python run_agent.py
+# Make sure server is running first (see above)
+uv run python train_simple.py
 ```
 
-For H100 and other large-GPU workflows, prefer the quantized Unsloth path:
+The Q-learning agent starts knowing nothing and discovers optimal policies through environment interaction over ~500 episodes. No hardcoded rules.
 
-```bash
-uv sync --extra train
-uv run python run_agent_unsloth.py
+---
+
+## Environment Architecture
+
 ```
-
-Configuration is via environment variables:
-
-| Variable | Default | Description |
-|---|---|---|
-| `RUN_AGENT_USE_PIPELINE` | `0` | Use HF `pipeline()` path instead of direct generate |
-| `RUN_AGENT_MAX_EPISODE_STEPS` | `12` | Maximum number of planning steps |
-
-The local model defaults to `Qwen/Qwen3.5-0.8B` with sampling parameters `temperature=0.7`, `top_p=0.8`, `top_k=20`, `repetition_penalty=1.3`. The episode runs up to `MAX_EPISODE_STEPS = 12` steps. When action parsing fails, the script falls back to an observation-aware action that respects prerequisites.
-
-PowerShell note: older PowerShell versions do not support `&&`. Run commands from the target directory directly, or use `;` as the command separator.
-
-Windows runtime warnings:
-- If you see HuggingFace symlink-cache warnings, functionality is unaffected; optionally set `HF_HUB_DISABLE_SYMLINKS_WARNING=1`.
-- If you see flash attention / causal-conv fallback warnings, execution continues with a slower PyTorch path.
-
-### 4. GRPO training
-
-`training_script.py` follows the TRL GRPO pattern and uses OpenEnv rewards to score generated action JSON against this environment.
-
-```bash
-uv sync --extra train
-uv run python training_script.py --dry-run
-uv run python training_script.py --model-id Qwen/Qwen3.5-0.8B
-```
-
-For H100, the preferred entrypoint is `training_unsloth.py`, which uses Unsloth 4-bit loading plus LoRA for faster quantized GRPO training:
-
-```bash
-uv sync --extra train
-uv run python training_unsloth.py --dry-run
-uv run python training_unsloth.py --model-id Qwen/Qwen3.5-4B
-```
-
-**Laptop / mid-range GPU (e.g. 12GB VRAM):** Use reduced batch size and sequence length to avoid OOM:
-
-```bash
-uv sync --extra train
-uv pip install unsloth unsloth_zoo --no-deps   # if using training_unsloth.py
-uv run python training_unsloth.py --model-id Qwen/Qwen3-4B-Base --output-dir training/grpo-unsloth-qwen3-4b --dataset-episodes 12 --rollout-steps 6 --per-device-train-batch-size 1 --num-generations 2 --gradient-accumulation-steps 4 --max-seq-length 1024 --trust-remote-code
-```
-
-If you still hit OOM, try `--max-seq-length 768` or `--num-generations 1`.
-
-**PyTorch CUDA:** Use the PyTorch index that matches your GPU. For older cards (RTX 20/30/40 series): `uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121`. For **RTX 50 series (Blackwell, sm_120)** you need a CUDA 12.8 build:
-
-```bash
-uv pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
-uv pip install triton-windows   # required by Unsloth on Windows
-```
-
-Key arguments:
-
-| Argument | Default | Description |
-|---|---|---|
-| `--model-id` | `Qwen/Qwen2.5-7B-Instruct` | Base model to fine-tune |
-| `--output-dir` | `training/grpo-output` | Save directory |
-| `--dataset-episodes` | `8` | Rollout episodes for prompt dataset |
-| `--rollout-steps` | `6` | Steps per episode during collection |
-| `--collection-policy` | `heuristic` | `random` or `heuristic` |
-| `--reward-backend` | `local` | `local` (in-process) or `remote` (live server) |
-| `--base-url` | `http://localhost:8000` | Server URL for remote backend |
-| `--scenario-name` | all | Repeatable; restricts which scenarios are used |
-| `--domain-randomise` | off | Enable domain randomisation |
-| `--num-generations` | `4` | GRPO generations per prompt |
-| `--max-completion-length` | `160` | Max tokens for model completions |
-| `--max-prompt-length` | `768` | Max tokens for prompts |
-| `--learning-rate` | `5e-6` | AdamW learning rate |
-| `--dry-run` | off | Build data and test reward without training |
-
-By default the reward function reconstructs prompt states locally so the prompt and reward stay aligned. Switch to a live server-backed reward loop with `--reward-backend remote --base-url http://localhost:8000`.
-
-`training_unsloth.py` adds H100-oriented options such as `--max-seq-length`, `--disable-4bit`, and LoRA settings (`--lora-r`, `--lora-alpha`, `--lora-dropout`). vLLM fast inference is disabled to avoid dependency conflicts.
-
-After training, the script saves plots to the output directory:
-
-- `training_loss.png`
-- `training_reward.png`
-- `training_metric.png`
-- `training_dashboard.png`
-- `training_plot_manifest.json`
-
-Use `--plot-metric-key <logged_key>` to force a specific extra metric on the third chart; otherwise the script auto-selects a useful logged metric such as KL or gradient norm.
-
-### 5. Rollout collection
-
-`training/rollout_collection.py` collects direct environment rollouts into trajectory files:
-
-```bash
-uv run python -m training.rollout_collection
-```
-
-This runs N episodes with a `random` or `heuristic` policy, saves JSON trajectories, and prints evaluation metrics.
-
-### 6. Benchmark and scripted agents
-
-- `training/literature_benchmark.py` runs paper-aligned action sequences and compares outcomes against curated expected findings
-- `training/rollout_collection.py` collects direct environment rollouts into trajectory files
-- `training_script.py` trains a GRPO policy with OpenEnv reward calls
-- `training_unsloth.py` trains a quantized GRPO policy with Unsloth on H100-class GPUs
-- `run_agent.py` runs a local language model planner against the environment
-- `run_agent_unsloth.py` runs the planner with Unsloth 4-bit loading for faster inference
-- `training/trajectory.py` stores trajectories for offline RL, imitation learning, replay, and evaluation
-- `training/evaluation.py` computes online, benchmark, expert-review, and fidelity-oriented metrics
-
-## Training utilities
-
-### `training/trajectory.py`
-
-Provides `TrajectoryStep`, `Trajectory`, and `TrajectoryDataset` for episode serialization.
-
-- `TrajectoryStep` stores `action`, `observation`, `reward`, `done`, `reward_breakdown`, and an optional `latent_snapshot`
-- `Trajectory` accumulates steps with `add_step()`, computes `total_reward`, and exposes `save(path)` / `load(path)`
-- `TrajectoryDataset` wraps a list of trajectories with `filter_successful()`, `save_dir()`, `load_dir()`, and `summary()` (n, success_rate, mean_reward, mean_length, max/min reward)
-
-### `training/evaluation.py`
-
-`EvaluationSuite` is a stateless class with four families of `@staticmethod` methods:
-
-| Family | Method | Metrics |
-|---|---|---|
-| Online RL | `online_metrics(trajectories)` | `mean_return`, `median_return`, `std_return`, `mean_episode_length`, `success_rate` |
-| Offline benchmark | `benchmark_metrics(dataset)` | `pipeline_validity_rate`, `ordering_score`, `action_diversity`, `mean_conclusion_confidence` |
-| Expert review | `expert_review_metrics(...)` | Placeholder; averages provided scores |
-| Simulator fidelity | `simulator_fidelity_metrics(sim, real)` | `reward_distribution_gap` |
-
-### `training/literature_benchmark.py`
-
-`run_paper_benchmark(problem_statement, scenario_name, domain_randomise)` runs a paper-aligned action pipeline and scores against `expected_findings` using keyword matching. Returns a `PaperBenchmarkResult` with `match_ratio`.
-
-## Docker deployment
-
-The server ships with a `server/Dockerfile`. It uses a multi-stage build based on `openenv-base`, installs dependencies via `uv`, and starts `uvicorn server.app:app` on port 8000.
-
-```bash
-docker build -f server/Dockerfile -t bio-experiment-env .
-docker run -p 8000:8000 bio-experiment-env
-```
-
-The `openenv.yaml` file configures the deployment for the OpenEnv platform:
-
-```yaml
-spec_version: 1
-name: hackathon
-type: space
-runtime: fastapi
-app: server.app:app
-port: 8000
-```
-
-## Why this is useful
-
-This environment is trying to model a realistic scientific planning loop rather than a toy decision problem:
-
-- actions have prerequisites
-- outputs are noisy and imperfect
-- budget and time matter
-- not every correct-looking answer is well supported
-- final conclusions are scored against hidden ground truth
-
-That makes it suitable for:
-
-- agent planning benchmarks
-- RL experiments on long-horizon scientific reasoning
-- literature-grounded evaluation
-- comparing structured policies against LLM-driven planners
-
-## Project map
-
-```text
-.
-├── client.py                     # OpenEnv HTTP/WebSocket client
-├── models.py                     # Shared action / observation / task schemas
-├── openenv.yaml                  # OpenEnv platform deployment config
-├── pyproject.toml                # Package metadata and dependency groups
-├── run_agent.py                  # Single-episode interactive agent runner
-├── run_agent_unsloth.py          # Quantized Unsloth interactive agent runner
+StudentGrad-RL/
 ├── server/
-│   ├── app.py                    # FastAPI/OpenEnv server entry point
-│   ├── Dockerfile                # Multi-stage Docker build
-│   ├── hackathon_environment.py  # Main environment orchestration
-│   ├── requirements.txt          # Minimal server dependencies
-│   ├── rewards/
-│   │   └── reward.py             # Decomposed reward model
-│   ├── rules/
-│   │   └── engine.py             # Biological constraint checking
+│   ├── app.py                    # FastAPI server (singleton factory pattern)
+│   ├── student_environment.py    # Core POMDP logic — reset() and step()
 │   ├── simulator/
-│   │   ├── latent_state.py       # Hidden biological, technical, progress, resource state
-│   │   ├── noise.py              # Seeded stochastic noise model
-│   │   ├── output_generator.py   # Per-action simulated output generation
-│   │   └── transition.py         # State transition engine and ACTION_COSTS table
-│   ├── subagents/                # Placeholder for future sub-agent integration
+│   │   ├── latent_state.py       # Hidden ground truth (agent never sees this)
+│   │   ├── transition.py         # State transition dynamics
+│   │   ├── noise.py              # Gaussian noise model
+│   │   └── output_generator.py   # Per-action output simulation
+│   ├── rules/engine.py           # Hard/soft violation checker
+│   ├── rewards/reward.py         # Reward decomposition
 │   └── tasks/
-│       ├── generator.py          # TaskGenerator with domain randomisation
-│       └── scenarios.py          # SCENARIO_LIBRARY with 4 curated scenarios
-├── training/
-│   ├── evaluation.py             # EvaluationSuite metrics
-│   ├── literature_benchmark.py   # Paper-backed benchmark flow
-│   ├── rollout_collection.py     # Direct rollout collection helper
-│   └── trajectory.py             # Trajectory serialization and dataset utilities
-├── training_script.py            # TRL GRPO training entry point
-├── training_unsloth.py           # Unsloth quantized GRPO training entry point
-└── tests/
-    ├── test_environment.py
-    ├── test_literature_benchmark.py
-    ├── test_models.py
-    ├── test_rewards.py
-    ├── test_rules.py
-    ├── test_simulator.py
-    └── test_training_script.py
+│       ├── scenarios.py          # 3 task definitions
+│       └── generator.py         # Domain randomisation
+├── models.py                     # StudentAction + StudentObservation (Pydantic)
+├── inference.py                  # OpenEnv-compatible baseline agent
+├── train_simple.py               # Q-learning agent (genuine RL)
+├── watch_agent.py                # Rule-based demo agent + trajectory recorder
+└── openenv.yaml                  # OpenEnv spec
 ```
 
-## Quick sanity check
+**Key design decisions:**
+
+- **Singleton factory pattern** in `app.py` — `openenv-core` calls `_env_factory()` on every HTTP request. Without the singleton, state from `/reset` is lost before `/step` is called.
+- **POMDP with noisy observations** — the agent sees estimated state, not ground truth. Hidden variables (true learning rates, fatigue threshold) vary per episode via domain randomisation.
+- **Rule engine** separates hard violations (block the action) from soft violations (reduce output quality), giving the agent informative feedback rather than binary pass/fail.
+
+---
+
+## OpenEnv Compliance
+
+| Endpoint | Status |
+|---|---|
+| `GET /health` | ✅ |
+| `GET /metadata` | ✅ |
+| `GET /schema` | ✅ |
+| `POST /reset` | ✅ |
+| `POST /step` | ✅ |
+| `GET /state` | ✅ |
+| `POST /mcp` | ✅ |
+| `GET /openapi.json` | ✅ |
+
+Validated with `openenv validate` — **6/6 criteria passing**.
+
+---
+
+## Mandatory Inference Variables
 
 ```bash
-uv run pytest tests/test_environment.py tests/test_literature_benchmark.py -q
-```
+export API_BASE_URL=https://api.openai.com/v1   # or any OpenAI-compatible endpoint
+export MODEL_NAME=gpt-4o-mini
+export HF_TOKEN=hf_your_token_here
+export ENV_SERVER_URL=https://GarvVermaa-StudentGrad-RL.hf.space
 
-Those tests verify:
-
-- reset and step lifecycle
-- valid vs invalid pipeline behavior
-- conclusion termination
-- literature-backed scenario selection
-- benchmark matching for curated expected findings
-
-Run the full suite with coverage:
-
-```bash
-uv run pytest tests/ --cov -q
+python inference.py --scenario hard_full_year --max-steps 365
 ```
