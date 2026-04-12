@@ -207,7 +207,12 @@ def run_episode(model: str, scenario: Optional[str], max_steps: int, verbose: bo
         if not success and breakdown.get("term_academic_failed_penalty", 0) == 0 and total_reward > 5:
             success = True
 
-    score = min(1.0, max(0.0, total_reward / 15.0))
+    # Normalise score to (0, 1) exclusive — required by hackathon validator.
+    # Max expected reward ≈ max_steps × 1.5 (empirical avg step reward).
+    # Using 1.6× gives headroom so score never hits exactly 1.0.
+    _expected_max = max_steps * 1.6
+    score = total_reward / _expected_max
+    score = min(0.9999, max(0.0001, score))
     log_end(success=success, steps=step, score=score, rewards=rewards)
 
 

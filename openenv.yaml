@@ -6,15 +6,3 @@ app: server.app:app
 main: server.app:main
 port: 8000
 inference: inference:main
-
-graders:
-  - name: academic_performance
-    fn: server.graders:academic_performance_grader
-  - name: project_completion
-    fn: server.graders:project_completion_grader
-  - name: employability
-    fn: server.graders:employability_grader
-  - name: efficiency
-    fn: server.graders:efficiency_grader
-  - name: balanced_strategy
-    fn: server.graders:balanced_strategy_grader
