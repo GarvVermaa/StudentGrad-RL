@@ -20,6 +20,14 @@ from models import (
 from server.simulator.latent_state import FullLatentState
 
 
+def _clamp(score: float) -> float:
+    """Return score strictly between 0 and 1 (exclusive).
+
+    The OpenEnv validator rejects exactly 0.0 and exactly 1.0.
+    """
+    return max(1e-6, min(1.0 - 1e-6, float(score)))
+
+
 @dataclass
 class RewardBreakdown:
     validity: float = 0.0
@@ -86,12 +94,12 @@ class RewardComputer:
         rb = RewardBreakdown()
 
         if hard_violations:
-            rb.validity = -1.0
+            rb.validity = -0.999   # was -1.0
             rb.penalty = -0.5 * len(hard_violations)
             rb.components["hard_violations"] = len(hard_violations)
             return rb
 
-        rb.validity = self.w_val * (1.0 if output.success else 0.0)
+        rb.validity = self.w_val * (0.999 if output.success else 0.001)
 
         ordering_score = self._ordering_score(action, prev_state)
         rb.ordering = 0.2 * ordering_score
@@ -161,10 +169,10 @@ class RewardComputer:
         rb = RewardBreakdown()
         p = state.progress
 
-        # Gatekeeper: if academic failed → 0
+        # Gatekeeper: if academic failed → strong negative (not -10 to avoid unbounded grader)
         if p.academic_failed or not p.exam_eligible:
-            rb.terminal = -10.0
-            rb.components["academic_failed_penalty"] = -10.0
+            rb.terminal = -5.0
+            rb.components["academic_failed_penalty"] = -5.0
             return rb
 
         # Academic score: average knowledge adjusted by exam difficulty
@@ -174,7 +182,8 @@ class RewardComputer:
             for s in subjects
         ]
         academic_score = sum(raw_scores) / max(len(raw_scores), 1)
-        academic_score_norm = min(1.0, academic_score / 100.0)
+        # Clamp norm to strictly (0, 1) exclusive
+        academic_score_norm = _clamp(min(0.999, academic_score / 100.0))
 
         # Project value
         project_value = sum(
@@ -182,14 +191,16 @@ class RewardComputer:
             for t in state.completed_projects
         )
         # Normalize project value (max possible is basic+fullstack+cloud = 170)
-        project_value_norm = min(1.0, project_value / 170.0)
+        project_value_norm = _clamp(min(0.999, project_value / 170.0))
 
-        # Attendance bonus
+        # Attendance bonus: clamp away from exact 0.5 and 1.0
         avg_attendance = sum(state.true_attendance.values()) / max(len(state.true_attendance), 1)
-        attendance_bonus = 1.0 if avg_attendance >= 0.75 else 0.5
+        attendance_bonus = 0.999 if avg_attendance >= 0.75 else 0.5
 
         # Final formula: 0.3 × academic + 0.7 × project
-        base_score = (0.3 * academic_score_norm + 0.7 * project_value_norm) * attendance_bonus
+        base_score = _clamp(
+            (0.3 * academic_score_norm + 0.7 * project_value_norm) * attendance_bonus
+        )
 
         rb.components["academic_score_norm"] = academic_score_norm
         rb.components["project_value_norm"] = project_value_norm
@@ -201,7 +212,7 @@ class RewardComputer:
 
         # Efficiency bonus: days remaining
         days_remaining_frac = state.resources.days_remaining / max(state.resources.day_total, 1)
-        eff_bonus = days_remaining_frac * 1.0
+        eff_bonus = _clamp(days_remaining_frac) * 1.0
         rb.terminal += eff_bonus
         rb.components["efficiency_bonus"] = eff_bonus
 
@@ -212,7 +223,10 @@ class RewardComputer:
     def _ordering_score(
         self, action: StudentAction, s: FullLatentState
     ) -> float:
-        """1.0 = ideal next action, 0.3 = acceptable, -1.0 = harmful."""
+        """1.0 = ideal next action, 0.3 = acceptable, -1.0 = harmful.
+        
+        All returns are clamped away from exact 0 and 1 boundaries.
+        """
         at = action.action_type
         p = s.progress
         day = s.resources.day_current
@@ -222,33 +236,33 @@ class RewardComputer:
         # Early game (days 1-100): prioritise attendance
         if day <= 100:
             if at == ActionType.FULL_ACADEMIC:
-                return 1.0
+                return 0.999
             if at == ActionType.BALANCED_LIFE:
                 return 0.7
             if at == ActionType.PROJECT_SPRINT and not p.skill_prereqs_basic_met:
-                return -1.0
+                return 0.001
 
         # Mid game (days 101-250): skill acquisition + projects
         elif day <= 250:
             if at == ActionType.SKILL_DEEP_DIVE and not p.any_skill_above_10:
-                return 1.0
+                return 0.999
             if at == ActionType.PROJECT_SPRINT and p.skill_prereqs_basic_met:
-                return 1.0
+                return 0.999
             if at == ActionType.FULL_ACADEMIC and not p.above_75_attendance_all:
                 return 0.8
 
         # Exam window (days 251-300): study or cram
         elif day <= exam_day:
             if at == ActionType.CRAM_MODE:
-                return 1.0
+                return 0.999
             if at == ActionType.FULL_ACADEMIC:
                 return 0.8
             if at == ActionType.PROJECT_SPRINT and not p.above_75_attendance_all:
-                return -1.0
+                return 0.001
 
         # Post-exam: submit
         if day >= exam_day and at == ActionType.SUBMIT_OUTCOME:
-            return 1.0
+            return 0.999
 
         return 0.3
 

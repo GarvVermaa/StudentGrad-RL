@@ -164,8 +164,8 @@ class OutputGenerator:
                     f"Fatigue now ≈ {round(new_fatigue)}.",
             energy_after=s.resources.energy_max,
             fatigue_after=new_fatigue,
-            quality_score=1.0,
-            uncertainty=0.0,
+            quality_score=0.999,   # was 1.0 — clamped to stay strictly < 1
+            uncertainty=0.001,     # was 0.0 — clamped to stay strictly > 0
         )
 
     def _submit_outcome(
@@ -177,8 +177,8 @@ class OutputGenerator:
             PROJECT_VALUE.get(ProjectTier(t), 0.0) for t in projects
         )
         avg_knowledge = sum(s.true_knowledge.values()) / max(len(s.true_knowledge), 1)
-        academic_score = avg_knowledge * (1.0 if p.exam_eligible else 0.0)
-        final_score = 0.3 * academic_score + 0.7 * project_value if p.exam_eligible else 0.0
+        academic_score = avg_knowledge * (0.999 if p.exam_eligible else 0.001)
+        final_score = 0.3 * academic_score + 0.7 * project_value if p.exam_eligible else 0.001
 
         return DailyOutput(
             success=p.exam_eligible,
@@ -189,8 +189,8 @@ class OutputGenerator:
                 f"Final Employability Score: {round(final_score, 2)}. "
                 + ("PASSED all subjects." if p.passed_all_subjects else "FAILED — did not meet academic threshold.")
             ),
-            quality_score=1.0,
-            uncertainty=0.0,
+            quality_score=0.999,   # was 1.0 — clamped to stay strictly < 1
+            uncertainty=0.001,     # was 0.0 — clamped to stay strictly > 0
             data={
                 "academic_score": academic_score,
                 "project_value": project_value,
@@ -207,7 +207,7 @@ class OutputGenerator:
         return DailyOutput(
             success=False,
             summary=f"Unknown action type: {action.action_type}",
-            quality_score=0.0,
+            quality_score=0.001,   # was 0.0 — clamped to stay strictly > 0
         )
 
     _HANDLERS = {
