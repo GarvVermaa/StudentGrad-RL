@@ -1,25 +1,16 @@
-"""Inference script for StudentGrad — OpenEnv mandatory log format.
+"""StudentGrad-RL — Inference script for OpenEnv hackathon validator.
 
-Mandatory environment variables (per hackathon spec):
-  API_BASE_URL   The API endpoint for the LLM (e.g. https://api.openai.com/v1)
-  MODEL_NAME     The model identifier (e.g. gpt-4o-mini)
-  HF_TOKEN       Your Hugging Face / API key
+Runs 3 tasks in sequence, producing one [START]...[END] block per task.
 
-Logs (strict format):
-  [START] task=<n> env=student-optimizer model=<model>
-  [STEP]  step=<n> action=<routine> reward=<val> done=<bool> error=<None|msg>
-  [END]   success=<bool> steps=<n> score=<0.0-1.0> rewards=<list>
-
-Usage:
-  python inference.py
-  python inference.py --scenario easy_single_subject --max-steps 30
-  python inference.py --scenario medium_three_subjects_basic_project --max-steps 180
-  python inference.py --scenario hard_full_year --max-steps 365
+Required environment variables:
+  API_BASE_URL   LLM endpoint (e.g. https://api.groq.com/openai/v1)
+  MODEL_NAME     Model identifier (e.g. llama-3.1-8b-instant)
+  HF_TOKEN       API key — NO DEFAULT, must be set explicitly
+  ENV_SERVER_URL Environment server URL (default: HF Space URL)
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import sys
@@ -30,96 +21,81 @@ from openai import OpenAI
 
 from models import build_agent_system_prompt
 
-# ── Mandatory hackathon variables ────────────────────────────────────────────
+# ── Mandatory env vars ────────────────────────────────────────────────────────
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME   = os.environ.get("MODEL_NAME",   "gpt-4o-mini")
-HF_TOKEN     = os.environ.get("HF_TOKEN")
+MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
+HF_TOKEN     = os.environ.get("HF_TOKEN")   # NO default — must be set
 
-SERVER_URL   = os.environ.get("ENV_SERVER_URL", "http://localhost:8000")
-TASK_NAME    = "student_career_optimization"
-BENCHMARK    = "student-optimizer"
+SERVER_URL   = os.environ.get("ENV_SERVER_URL", "https://GarvVermaa-StudentGrad-RL.hf.space")
 
-
-# ── Mandatory structured log helpers ─────────────────────────────────────────
-
-def log_start(*, task: str, env: str, model: str) -> None:
-    print(f"[START] task={task} env={env} model={model}", flush=True)
-
-
-def log_step(*, step: int, action: str, reward: float, done: bool, error: Any) -> None:
-    print(f"[STEP] step={step} action={action} reward={round(reward, 4)} done={done} error={error}", flush=True)
+# ── Task definitions — names MUST match openenv.yaml exactly ─────────────────
+TASKS = [
+    {"name": "easy_attendance",  "scenario": "easy_single_subject",                  "max_steps": 30},
+    {"name": "medium_projects",  "scenario": "medium_three_subjects_basic_project",   "max_steps": 60},
+    {"name": "hard_full_year",   "scenario": "hard_full_year",                        "max_steps": 100},
+]
 
 
-def log_end(*, success: bool, steps: int, score: float, rewards: List[float]) -> None:
-    print(f"[END] success={success} steps={steps} score={round(score, 4)} rewards={rewards}", flush=True)
+# ── Log helpers — strict format required by validator ─────────────────────────
+
+def _bool(v: bool) -> str:
+    return "true" if v else "false"
+
+def _error(e: Any) -> str:
+    return "null" if e is None else str(e)
+
+def log_start(task: str, model: str) -> None:
+    print(f"[START] task={task} env=student-optimizer model={model}", flush=True)
+
+def log_step(step: int, action: str, reward: float, done: bool, error: Any) -> None:
+    print(
+        f"[STEP] step={step} action={action} "
+        f"reward={reward:.2f} done={_bool(done)} error={_error(error)}",
+        flush=True,
+    )
+
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    rewards_csv = ",".join(f"{r:.2f}" for r in rewards)
+    print(
+        f"[END] success={_bool(success)} steps={steps} "
+        f"score={score:.2f} rewards={rewards_csv}",
+        flush=True,
+    )
 
 
 # ── Environment HTTP helpers ──────────────────────────────────────────────────
-# openenv-core's StepRequest wraps the action: POST /step with body {"action": {...}}
-# openenv-core's ResetRequest accepts: POST /reset with body {} or {"seed": n}
 
-def reset_env(scenario: Optional[str] = None, seed: Optional[int] = None) -> Dict[str, Any]:
-    """POST /reset — body is ResetRequest: {seed?, episode_id?}
-    scenario_name is passed as a query parameter since ResetRequest has no scenario field."""
-    params: Dict[str, Any] = {}
-    if scenario:
-        params["scenario_name"] = scenario  # sent as query param
-    body: Dict[str, Any] = {}
-    if seed is not None:
-        body["seed"] = seed
-    resp = requests.post(f"{SERVER_URL}/reset", json=body, params=params, timeout=30)
+def reset_env(scenario: str) -> Dict[str, Any]:
+    resp = requests.post(
+        f"{SERVER_URL}/reset",
+        json={},
+        params={"scenario_name": scenario},
+        timeout=30,
+    )
     resp.raise_for_status()
     return resp.json()
 
 
 def step_env(action: Dict[str, Any]) -> Dict[str, Any]:
-    """POST /step — body MUST be StepRequest: {"action": {action fields}}"""
-    body = {"action": action}   # <-- THE FIX: openenv wraps in {"action": ...}
-    resp = requests.post(f"{SERVER_URL}/step", json=body, timeout=30)
+    resp = requests.post(
+        f"{SERVER_URL}/step",
+        json={"action": action},
+        timeout=30,
+    )
     resp.raise_for_status()
     return resp.json()
 
 
-# ── Prompt helpers ────────────────────────────────────────────────────────────
+# ── LLM action generation ─────────────────────────────────────────────────────
 
-def build_user_prompt(obs: Dict[str, Any]) -> str:
-    day        = obs.get("day", 0)
-    energy     = obs.get("energy", 10)
-    fatigue    = obs.get("fatigue", 0)
-    attendance = obs.get("attendance", {})
-    knowledge  = obs.get("knowledge", {})
-    skills     = obs.get("skills", {})
-    projects   = obs.get("completed_projects", [])
-    progress   = obs.get("active_project_progress", 0)
-    sick       = obs.get("sick_today", False)
-    quiz       = obs.get("surprise_quiz_today", False)
-    violations = obs.get("rule_violations", [])
-    last_reward = obs.get("reward", 0)
-
-    return (
-        f"DAY: {day}/365  |  ENERGY: {energy}/10  |  FATIGUE: {fatigue}/100\n"
-        + ("⚠️ SICK TODAY — reduced effectiveness\n" if sick else "")
-        + ("⚠️ SURPRISE QUIZ TODAY\n" if quiz else "")
-        + f"\nATTENDANCE (need ≥40% each subject):\n{json.dumps(attendance, indent=2)}"
-        + f"\nKNOWLEDGE (0-100):\n{json.dumps(knowledge, indent=2)}"
-        + f"\nSKILLS (points):\n{json.dumps(skills, indent=2)}"
-        + f"\nCOMPLETED PROJECTS: {projects}"
-        + f"\nACTIVE PROJECT PROGRESS: {round(progress * 100)}%"
-        + f"\nLAST STEP REWARD: {round(last_reward, 3)}"
-        + f"\nRULE VIOLATIONS: {violations}"
-        + "\n\nChoose your action for today. Respond ONLY with JSON."
-    )
-
-
-def parse_action(text: str) -> Dict[str, Any]:
+def _parse_action(text: str) -> Dict[str, Any]:
     text = text.strip()
-    if "<think>" in text and "</think>" in text:
-        text = text[text.rfind("</think>") + 8:].strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    start, end = text.find("{"), text.rfind("}") + 1
+    start = text.find("{")
+    end   = text.rfind("}") + 1
     if start >= 0 and end > start:
         try:
             return json.loads(text[start:end])
@@ -128,109 +104,121 @@ def parse_action(text: str) -> Dict[str, Any]:
     return {"action_type": "balanced_life", "justification": "parse_failure", "confidence": 0.3}
 
 
-# ── Episode runner ────────────────────────────────────────────────────────────
+def get_action(client: OpenAI, obs: Dict[str, Any]) -> Dict[str, Any]:
+    system = build_agent_system_prompt()
+    day      = obs.get("day", 0)
+    energy   = obs.get("energy", 10.0)
+    fatigue  = obs.get("fatigue", 0.0)
+    att      = obs.get("attendance", {})
+    know     = obs.get("knowledge", {})
+    skills   = obs.get("skills", {})
+    projects = obs.get("completed_projects", [])
 
-def run_episode(model: str, scenario: Optional[str], max_steps: int, verbose: bool = True) -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
-    system_prompt = build_agent_system_prompt()
+    user = (
+        f"DAY {day}/365 | ENERGY: {energy:.1f}/10 | FATIGUE: {fatigue:.0f}/100\n"
+        f"ATTENDANCE: {', '.join(f'{k}:{v:.0%}' for k,v in att.items())}\n"
+        f"KNOWLEDGE: {', '.join(f'{k}:{v:.0f}' for k,v in know.items())}\n"
+        f"SKILLS: {', '.join(f'{k}:{v:.1f}' for k,v in skills.items())}\n"
+        f"PROJECTS DONE: {projects if projects else 'none'}\n\n"
+        "Choose your action. Respond ONLY with JSON."
+    )
 
-    obs_data = reset_env(scenario)
-    obs = obs_data.get("observation", obs_data)
+    try:
+        resp = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user},
+            ],
+            max_tokens=200,
+            temperature=0.7,
+        )
+        return _parse_action(resp.choices[0].message.content or "")
+    except Exception:
+        return {"action_type": "balanced_life", "justification": "llm_error", "confidence": 0.3}
 
-    log_start(task=TASK_NAME, env=BENCHMARK, model=model)
 
-    total_reward = 0.0
+# ── Single task runner ────────────────────────────────────────────────────────
+
+def run_task(client: OpenAI, task: Dict[str, Any]) -> None:
+    task_name = task["name"]
+    scenario  = task["scenario"]
+    max_steps = task["max_steps"]
+
+    log_start(task=task_name, model=MODEL_NAME)
+
     rewards: List[float] = []
-    step = 0
+    obs: Dict[str, Any] = {}
+    error: Any = None
     done = False
-    success = False
+    step = 0
 
-    while not done and step < max_steps:
+    try:
+        reset_data = reset_env(scenario)
+        obs = reset_data.get("observation", reset_data)
+    except Exception as exc:
+        print(f"[DEBUG] Reset failed: {exc}", file=sys.stderr, flush=True)
+        # Still emit a valid END block so validator can parse it
+        log_end(success=False, steps=0, score=0.0001, rewards=[])
+        return
+
+    while step < max_steps and not done:
         step += 1
-        user_msg = build_user_prompt(obs)
         error = None
 
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": user_msg},
-                ],
-                max_tokens=512,
-                temperature=0.7,
-            )
-            raw = response.choices[0].message.content or ""
-        except Exception as exc:
-            error = str(exc)
-            print(f"[DEBUG] LLM error: {exc}", file=sys.stderr, flush=True)
-            raw = '{"action_type": "balanced_life"}'
-
-        action = parse_action(raw)
+        action = get_action(client, obs)
+        action_str = action.get("action_type", "balanced_life")
 
         try:
             step_data = step_env(action)
+            obs    = step_data.get("observation", step_data)
+            reward = float(step_data.get("reward", obs.get("reward", 0.0)))
+            done   = bool(step_data.get("done",   obs.get("done", False)))
         except requests.HTTPError as exc:
             error = str(exc)
-            print(f"[DEBUG] Step HTTP error: {exc}. Falling back to rest.", file=sys.stderr, flush=True)
+            print(f"[DEBUG] Step HTTP error: {exc}", file=sys.stderr, flush=True)
+            # Fallback action
             try:
                 step_data = step_env({"action_type": "rest"})
+                obs    = step_data.get("observation", step_data)
+                reward = float(step_data.get("reward", obs.get("reward", 0.0)))
+                done   = bool(step_data.get("done",   obs.get("done", False)))
             except Exception as exc2:
-                print(f"[DEBUG] Fallback also failed: {exc2}", file=sys.stderr, flush=True)
-                break
+                print(f"[DEBUG] Fallback failed: {exc2}", file=sys.stderr, flush=True)
+                reward = 0.0
 
-        obs         = step_data.get("observation", step_data)
-        reward      = float(step_data.get("reward", obs.get("reward", 0.0)))
-        done        = bool(step_data.get("done",   obs.get("done",   False)))
-        total_reward += reward
         rewards.append(reward)
+        log_step(step=step, action=action_str, reward=reward, done=done, error=error)
 
-        log_step(step=step, action=action.get("action_type", "unknown"),
-                 reward=reward, done=done, error=error)
+    # Score: total_reward / (max_steps * 1.6), clamped strictly to (0.0001, 0.9999)
+    total = sum(rewards)
+    raw_score = total / (max_steps * 1.6)
+    score = max(0.0001, min(0.9999, raw_score))
 
-        if verbose and step % 30 == 0:
-            print(
-                f"  Day {obs.get('day', step)} | Fatigue: {obs.get('fatigue', 0)} | "
-                f"Projects: {obs.get('completed_projects', [])} | "
-                f"Cumulative: {round(total_reward, 2)}",
-                flush=True,
-            )
-
-        if done:
-            break
-
+    # Determine success from observation
+    success = False
     if isinstance(obs, dict):
         latest = obs.get("latest_output") or {}
         if isinstance(latest, dict):
             success = bool(latest.get("data", {}).get("passed", False))
-        breakdown = obs.get("step_reward_breakdown", {})
-        if not success and breakdown.get("term_academic_failed_penalty", 0) == 0 and total_reward > 5:
-            success = True
+        if not success:
+            breakdown = obs.get("step_reward_breakdown", {})
+            if breakdown.get("term_academic_failed_penalty", 0) == 0 and total > 5:
+                success = True
 
-    # Normalise score to (0, 1) exclusive — required by hackathon validator.
-    # Max expected reward ≈ max_steps × 1.5 (empirical avg step reward).
-    # Using 1.6× gives headroom so score never hits exactly 1.0.
-    _expected_max = max_steps * 1.6
-    score = total_reward / _expected_max
-    score = min(0.9999, max(0.0001, score))
     log_end(success=success, steps=step, score=score, rewards=rewards)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="StudentGrad inference runner")
-    parser.add_argument("--model",     default=MODEL_NAME,       help="Model name")
-    parser.add_argument("--scenario",  default="hard_full_year", help="Scenario name")
-    parser.add_argument("--max-steps", type=int, default=365,    help="Max episode steps")
-    parser.add_argument("--verbose",   action="store_true", default=True)
-    args = parser.parse_args()
-
     if not HF_TOKEN:
-        print("[WARN] HF_TOKEN not set.", file=sys.stderr, flush=True)
+        print("[WARN] HF_TOKEN not set — LLM calls will fail.", file=sys.stderr, flush=True)
 
-    run_episode(model=args.model, scenario=args.scenario,
-                max_steps=args.max_steps, verbose=args.verbose)
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "no-key")
+
+    for task in TASKS:
+        run_task(client, task)
 
 
 if __name__ == "__main__":

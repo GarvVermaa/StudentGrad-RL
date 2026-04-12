@@ -6,3 +6,13 @@ app: server.app:app
 main: server.app:main
 port: 8000
 inference: inference:main
+tasks:
+  - name: easy_attendance
+    description: "Pass DSA in 30 days"
+    grader: server.graders:easy_task_grader
+  - name: medium_projects
+    description: "Pass 3 subjects and build a basic project in 60 days"
+    grader: server.graders:medium_task_grader
+  - name: hard_full_year
+    description: "Full year — all subjects + cloud project in 100 days"
+    grader: server.graders:hard_task_grader
